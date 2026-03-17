@@ -1,0 +1,157 @@
+description = "SaaS customer support — user reports double-billing bug, restates issue across 30 turns"
+
+[[turns]]
+role = "user"
+content = "Hi, I have a billing issue. I was charged twice this month for my Pro plan. My account email is alex@example.com and my account ID is ACC-88421. Please help me get a refund for the duplicate charge."
+
+[[turns]]
+role = "assistant"
+content = "Hi Alex, thanks for reaching out. I can see your account ACC-88421 with the Pro plan at $79/month. I'm pulling up your billing history now. Can you confirm the last four digits of the card that was charged?"
+
+[[turns]]
+role = "user"
+content = "The card ending in 4921. I see two charges on March 5th: one for $79.00 and another for $79.00, both from your company. This is clearly a duplicate. My account is ACC-88421 and I need this fixed."
+
+[[turns]]
+role = "assistant"
+content = "I can confirm two charges on March 5th: transaction TXN-20240305-A for $79.00 at 02:14 UTC and TXN-20240305-B for $79.00 at 02:16 UTC, both on the card ending in 4921. This appears to be a duplicate caused by a payment retry loop. I'm escalating this to our billing team."
+
+[[turns]]
+role = "user"
+content = "Great, please escalate it. My account is ACC-88421. The duplicate charge happened on March 5th. I need the $79 refund back to my card ending in 4921 as soon as possible."
+
+[[turns]]
+role = "assistant"
+content = "Escalation ticket BIL-994721 has been created. Billing typically processes refunds within 3–5 business days. You will receive a confirmation email at alex@example.com once the refund is issued. The refund will go back to your Visa ending in 4921."
+
+[[turns]]
+role = "user"
+content = "It's been 2 days and I haven't received any email about the refund. Can you check on ticket BIL-994721? I still see two $79 charges on my statement."
+
+[[turns]]
+role = "assistant"
+content = "I've checked ticket BIL-994721. The billing team added a note: they are waiting for payment processor confirmation from Stripe before issuing the refund. Stripe typically takes 24–48 hours to acknowledge duplicate transactions. Your case is marked high priority."
+
+[[turns]]
+role = "user"
+content = "I understand you're waiting on Stripe. But it's been 48 hours since I first reported this. My account ID is ACC-88421 and I was charged $79 twice on March 5th. I need this resolved. Can I speak to a manager?"
+
+[[turns]]
+role = "assistant"
+content = "I understand your frustration — a duplicate charge is unacceptable. I'm connecting you with senior billing manager Sarah Chen. She will review your case BIL-994721 directly and has authority to issue the refund immediately without waiting for Stripe. You will receive a call or email from her within 2 hours."
+
+[[turns]]
+role = "user"
+content = "It's been 3 hours and I haven't heard from Sarah Chen. My account ACC-88421 still shows the double charge of $79 from March 5th. This is terrible customer service. I want this escalated to a director."
+
+[[turns]]
+role = "assistant"
+content = "I sincerely apologize for the delay. I've now escalated to Director of Billing Operations Mark Torres — he has been personally notified about your case BIL-994721. I am also manually initiating the refund of $79 right now via our emergency refund process. You should see it on your card ending in 4921 within 1 business day."
+
+[[turns]]
+role = "user"
+content = "Thank you for initiating the refund manually. Just to confirm: the refund is $79 to my card ending in 4921, for the duplicate charge on March 5th, on account ACC-88421, correct?"
+
+[[turns]]
+role = "assistant"
+content = "Confirmed: $79.00 refund to Visa ending in 4921. Reference: REF-20240307-88421. Expected posting date March 8–9, 2024. You will receive an email confirmation at alex@example.com within 30 minutes. Ticket BIL-994721 is now marked resolved."
+
+[[turns]]
+role = "user"
+content = "It's March 9th and the refund still hasn't posted. I've checked my bank and there's no pending credit. My account is ACC-88421. The duplicate $79 charge from March 5th is still showing. What happened to refund REF-20240307-88421?"
+
+[[turns]]
+role = "assistant"
+content = "I see that REF-20240307-88421 was submitted to Stripe on March 7th but shows status PENDING. Stripe reports a 2–5 business day delay for refunds during this period due to high volume. March 9th is only 2 business days since submission. I recommend waiting until March 12th."
+
+[[turns]]
+role = "user"
+content = "I understand Stripe has delays. But I want to make sure nothing went wrong. Can you confirm the refund of $79 for account ACC-88421 is definitively in the queue and will not be cancelled or dropped?"
+
+[[turns]]
+role = "assistant"
+content = "Yes, I can definitively confirm: refund REF-20240307-88421 for $79.00 is in Stripe's processing queue and cannot be cancelled at this stage once submitted. The funds will arrive on card ending in 4921. If not received by March 13th, contact us with reference REF-20240307-88421 and we'll intervene directly with Stripe."
+
+[[turns]]
+role = "user"
+content = "Good. I also want to make sure this double-billing bug is fixed so it doesn't happen again. My account is ACC-88421. What caused the duplicate charge and how are you preventing it?"
+
+[[turns]]
+role = "assistant"
+content = "Root cause: our billing service had a webhook retry bug — when the initial Stripe webhook was delayed by 2 seconds, the service retried payment, creating a duplicate. Engineering deployed fix v2.1.4 on March 6th which adds idempotency keys to all payment requests. This class of duplicate is no longer possible."
+
+[[turns]]
+role = "user"
+content = "That's reassuring. Fix v2.1.4 with idempotency keys sounds solid. Was I the only customer affected or were others double-charged too?"
+
+[[turns]]
+role = "assistant"
+content = "The bug affected 47 accounts between March 4–5, 2024. All 47 affected accounts have been identified and refunds have been initiated automatically. Your case ACC-88421 was one of them. We are also sending a notification email to all affected customers by end of day March 9th."
+
+[[turns]]
+role = "user"
+content = "I'm glad it's being fixed. It's March 12th now. I still haven't received the refund. My account is ACC-88421, card ending in 4921, refund reference REF-20240307-88421 for $79. You said to contact you if not received by March 13th."
+
+[[turns]]
+role = "assistant"
+content = "I've contacted Stripe directly via our enterprise support channel regarding REF-20240307-88421. Stripe confirmed the refund is in their final processing batch for tonight. Expected posting to card ending in 4921 is March 12th or 13th. I'm escalating to priority status with Stripe."
+
+[[turns]]
+role = "user"
+content = "It's March 14th. The $79 refund still has not appeared on my card ending in 4921. This has been going on for 9 days. Account ACC-88421, duplicate charge March 5th, refund reference REF-20240307-88421. I want compensation for this delay."
+
+[[turns]]
+role = "assistant"
+content = "I deeply apologize for this extended delay. Stripe has confirmed REF-20240307-88421 was successfully processed on March 13th — there may be a 1-day lag in your bank's posting. Regarding compensation: I am crediting your account ACC-88421 with 2 free months of Pro service ($158 value) effective immediately. Your next charge will be May 5th."
+
+[[turns]]
+role = "user"
+content = "I can now see the $79 refund posted to my card ending in 4921 on March 14th. The 2 free months credit on account ACC-88421 also shows in my account. Thank you. Can you confirm the final status of ticket BIL-994721?"
+
+[[turns]]
+role = "assistant"
+content = "Ticket BIL-994721 is fully resolved. Summary: $79.00 refund posted March 14th to Visa ending in 4921. 2 free Pro months credit applied to ACC-88421 (value $158, valid through May 5th). Engineering fix v2.1.4 deployed to prevent future duplicates. Case closed."
+
+[[turns]]
+role = "user"
+content = "Perfect. Just to recap for my records: the duplicate charge was $79 on March 5th on account ACC-88421. The refund REF-20240307-88421 posted March 14th. I received a 2-month credit. The bug was fixed in v2.1.4. Is that all correct?"
+
+[[turns]]
+role = "assistant"
+content = "That is completely correct. To summarize: duplicate charge $79 on March 5th on ACC-88421, refund REF-20240307-88421 posted March 14th to card ending in 4921, 2 free months credit ($158) applied to your account, bug resolved in v2.1.4 with idempotency keys. Everything is in order."
+
+[[questions]]
+question = "What is the customer's account ID?"
+key_facts = ["ACC-88421"]
+
+[[questions]]
+question = "What was the amount of the duplicate charge and on what date did it occur?"
+key_facts = ["$79", "March 5"]
+
+[[questions]]
+question = "What is the refund reference number?"
+key_facts = ["REF-20240307-88421"]
+
+[[questions]]
+question = "What card did the customer use and what were the last four digits?"
+key_facts = ["4921"]
+
+[[questions]]
+question = "What was the root cause of the duplicate charge?"
+key_facts = ["webhook retry", "idempotency", "v2.1.4"]
+
+[[questions]]
+question = "How many accounts were affected by the billing bug?"
+key_facts = ["47"]
+
+[[questions]]
+question = "What compensation was given to the customer for the delay?"
+key_facts = ["2 free months", "2 months", "$158"]
+
+[[questions]]
+question = "What is the billing support ticket number?"
+key_facts = ["BIL-994721"]
+
+[[questions]]
+question = "What is the customer's email address?"
+key_facts = ["alex@example.com"]

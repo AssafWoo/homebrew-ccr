@@ -1,0 +1,45 @@
+2024-01-15 10:00:00 INFO  [worker-1] Processing batch job #4821
+2024-01-15 10:00:01 INFO  [worker-1] Loaded 1000 records from database
+2024-01-15 10:00:02 INFO  [worker-1] Starting transform pipeline
+2024-01-15 10:00:03 INFO  [worker-1] Processing record 1/1000
+2024-01-15 10:00:03 INFO  [worker-1] Processing record 2/1000
+2024-01-15 10:00:03 INFO  [worker-1] Processing record 3/1000
+2024-01-15 10:00:04 INFO  [worker-1] Processing record 4/1000
+2024-01-15 10:00:04 INFO  [worker-1] Processing record 5/1000
+2024-01-15 10:00:04 INFO  [worker-1] Processing record 6/1000
+2024-01-15 10:00:05 INFO  [worker-1] Processing record 7/1000
+2024-01-15 10:00:05 INFO  [worker-1] Processing record 8/1000
+2024-01-15 10:00:05 INFO  [worker-1] Processing record 9/1000
+2024-01-15 10:00:06 INFO  [worker-1] Processing record 10/1000
+2024-01-15 10:00:06 INFO  [worker-1] Processing record 11/1000
+2024-01-15 10:00:06 INFO  [worker-1] Processing record 12/1000
+2024-01-15 10:00:07 INFO  [worker-1] Processing record 13/1000
+2024-01-15 10:00:07 INFO  [worker-1] Processing record 14/1000
+2024-01-15 10:00:07 INFO  [worker-1] Processing record 15/1000
+2024-01-15 10:00:08 INFO  [worker-1] Processing record 16/1000
+2024-01-15 10:00:08 INFO  [worker-1] Processing record 17/1000
+2024-01-15 10:00:09 INFO  [worker-1] Processing record 18/1000
+2024-01-15 10:00:09 INFO  [worker-1] Processing record 19/1000
+2024-01-15 10:00:09 INFO  [worker-1] Processing record 20/1000
+2024-01-15 10:00:10 INFO  [worker-1] Processing record 21/1000
+2024-01-15 10:00:10 INFO  [worker-1] Processing record 22/1000
+2024-01-15 10:00:10 INFO  [worker-1] Processing record 23/1000
+2024-01-15 10:00:11 INFO  [worker-1] Processing record 24/1000
+2024-01-15 10:00:11 INFO  [worker-1] Processing record 25/1000
+2024-01-15 10:00:12 INFO  [worker-1] Processing record 26/1000
+2024-01-15 10:00:12 INFO  [worker-1] Processing record 27/1000
+2024-01-15 10:00:12 INFO  [worker-1] Processing record 28/1000
+2024-01-15 10:00:13 INFO  [worker-1] Processing record 29/1000
+2024-01-15 10:00:13 INFO  [worker-1] Processing record 30/1000
+2024-01-15 10:00:14 ERROR [worker-1] Unhandled exception in transform pipeline
+Traceback (most recent call last):
+  File "/app/worker/pipeline.py", line 147, in process_batch
+    result = transform(record)
+  File "/app/worker/transforms.py", line 89, in transform
+    normalized = record["user_id"] / record["amount"]
+  File "/app/worker/transforms.py", line 89, in transform
+TypeError: unsupported operand type(s) for /: 'str' and 'float'
+2024-01-15 10:00:14 ERROR [worker-1] Batch job #4821 FAILED after processing 30/1000 records
+2024-01-15 10:00:14 INFO  [worker-1] Cleanup: releasing database connections
+2024-01-15 10:00:15 INFO  [worker-1] Cleanup: flushing write buffer
+2024-01-15 10:00:15 INFO  [worker-1] Worker exiting with code 1

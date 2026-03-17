@@ -1,0 +1,21 @@
+command_hint = ""
+
+[[questions]]
+question = "What version was deployed?"
+key_facts = ["2.4.1"]
+
+[[questions]]
+question = "Did the deployment succeed or fail?"
+key_facts = ["succeed", "success", "SUCCEEDED"]
+
+[[questions]]
+question = "Which AWS region was the deployment target?"
+key_facts = ["us-east-1"]
+
+[[questions]]
+question = "How many pods were updated?"
+key_facts = ["6"]
+
+[[questions]]
+question = "What is the previous version available for rollback?"
+key_facts = ["2.3.9"]

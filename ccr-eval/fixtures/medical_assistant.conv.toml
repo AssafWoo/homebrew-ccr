@@ -1,0 +1,73 @@
+description = "Medical assistant helping a patient understand symptoms, diagnosis, and treatment options"
+
+[[turns]]
+role = "user"
+content = "I have been getting recurring headaches for about three weeks now. They always seem to start in the morning, affect only the left side of my head, and last for several hours. I have never had headaches like this before and I am starting to get worried."
+
+[[turns]]
+role = "assistant"
+content = "New-onset one-sided morning headaches lasting several hours and recurring over weeks are definitely worth investigating. One-sided headaches can indicate migraine, cluster headache, or tension-type headache among other causes. Are the headaches accompanied by nausea, sensitivity to light or sound, or any visual changes before or during the headache?"
+
+[[turns]]
+role = "user"
+content = "Yes, I am very sensitive to light when the headache is happening. About 20 minutes before the headache starts I see a flickering arc of light at the edge of my vision, like a crescent shape. No nausea though."
+
+[[turns]]
+role = "assistant"
+content = "The flickering crescent arc you describe is called a visual aura, and the sequence of aura followed by unilateral headache with photophobia is a textbook presentation of migraine with aura. This is one of the most recognizable migraine subtypes. It is a neurological condition, not dangerous in itself, but it significantly affects quality of life. You should see your doctor to confirm the diagnosis, as migraine with aura does carry a slightly elevated stroke risk in certain populations, particularly in women who smoke or use hormonal contraception."
+
+[[turns]]
+role = "user"
+content = "I saw my doctor and she prescribed Sumatriptan 50mg. She said to take it when the aura starts. Is this the right treatment?"
+
+[[turns]]
+role = "assistant"
+content = "Yes, Sumatriptan is a triptan — the first-line acute treatment for migraines. Taking it at aura onset is exactly right; triptans work best when taken early, before the headache peaks. The 50mg dose is the standard starting point. Important limits: do not exceed 200mg in any 24-hour period, and do not take it more than 10 days per month or you risk developing medication overuse headache. If 50mg is insufficient, the dose can be increased to 100mg."
+
+[[turns]]
+role = "user"
+content = "My doctor also mentioned preventive treatment since I am getting these more than twice a week. She mentioned Topiramate as an option. What can you tell me about it?"
+
+[[turns]]
+role = "assistant"
+content = "Topiramate, brand name Topamax, is FDA-approved for migraine prevention and is one of the most commonly prescribed preventives. The standard protocol starts at 25mg per day, usually at bedtime, and titrates up by 25mg every two weeks to a target of 50 to 100mg per day. Common side effects include cognitive slowing — patients call this dopamax — tingling in the hands and feet, decreased appetite, and weight loss. Kidney stones are a rarer but known risk, so stay well hydrated. It takes 8 to 12 weeks at therapeutic dose to see the full preventive effect."
+
+[[turns]]
+role = "user"
+content = "That is helpful. What are the warning signs that my headache is something more serious and I should go to the emergency room immediately?"
+
+[[turns]]
+role = "assistant"
+content = "Go to the emergency room immediately if you experience any of the following: a headache that is the worst of your life with sudden thunderclap onset, headache accompanied by fever and stiff neck which could indicate meningitis, headache following head trauma, or headache with sudden vision loss, weakness in your face or limbs, slurred speech, or confusion. These are red flag symptoms that could indicate subarachnoid hemorrhage, meningitis, or stroke. Your typical migraine-with-aura pattern should not produce these — if the character of the headache changes dramatically, treat it as an emergency."
+
+[[turns]]
+role = "user"
+content = "One more question. My sister also gets migraines. Should I be worried this is genetic?"
+
+[[turns]]
+role = "assistant"
+content = "Yes, migraine has a strong genetic component — first-degree relatives of people with migraine have a two to three times higher risk of developing it themselves. About 50 to 60 percent of migraine patients have a family history of the condition. This does not change your treatment plan, but it does mean your sister should be aware that her migraines and yours likely share a genetic basis, and that any children you have have a moderately elevated risk."
+
+[[questions]]
+question = "What visual symptom preceded the headache?"
+key_facts = ["aura", "flickering arc", "visual aura"]
+
+[[questions]]
+question = "What condition was diagnosed?"
+key_facts = ["migraine with aura"]
+
+[[questions]]
+question = "What medication was prescribed and at what dose?"
+key_facts = ["Sumatriptan", "50mg"]
+
+[[questions]]
+question = "What is the maximum Sumatriptan dose allowed in 24 hours?"
+key_facts = ["200mg", "200 mg"]
+
+[[questions]]
+question = "What preventive medication was mentioned and what is the starting dose?"
+key_facts = ["Topiramate", "25mg"]
+
+[[questions]]
+question = "What nickname do patients give Topiramate due to cognitive side effects?"
+key_facts = ["dopamax", "Dopamax"]

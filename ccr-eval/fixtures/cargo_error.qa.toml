@@ -1,0 +1,21 @@
+command_hint = "cargo"
+
+[[questions]]
+question = "How many errors occurred in the build?"
+key_facts = ["2", "two"]
+
+[[questions]]
+question = "What is the error code for the type mismatch error?"
+key_facts = ["E0308"]
+
+[[questions]]
+question = "In which file and at what line number did the first error occur?"
+key_facts = ["main.rs", "42"]
+
+[[questions]]
+question = "What type was expected but what type was found in the first error?"
+key_facts = ["i32", "str"]
+
+[[questions]]
+question = "Did the build succeed or fail?"
+key_facts = ["fail", "aborting", "error"]

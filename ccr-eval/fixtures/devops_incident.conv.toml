@@ -1,0 +1,93 @@
+description = "DevOps SRE working through a production incident with an AI assistant"
+
+[[turns]]
+role = "user"
+content = "Production incident in progress. Our payment service is throwing 503 errors. It started at 14:23 UTC. The error rate is currently at 34 percent of all payment requests. Users are unable to complete checkouts. I am the on-call SRE and need help diagnosing this fast."
+
+[[turns]]
+role = "assistant"
+content = "High-priority. 34% error rate on payments is critical. First check: are the payment service pods healthy in Kubernetes? Run kubectl get pods -n payments. Also pull the database connection pool metrics immediately — most payment service 503s at this scale come from pool exhaustion or a database issue rather than application code."
+
+[[turns]]
+role = "user"
+content = "kubectl shows 3 of the 8 payment pods are in CrashLoopBackOff state. The pod logs all show the same error: connection pool exhausted — max 100 connections, 100 active, 0 idle. The other 5 pods are running but heavily loaded."
+
+[[turns]]
+role = "assistant"
+content = "Classic connection pool exhaustion. All 100 connections are held and none are being returned to the pool. This is almost always caused by either a connection leak — connections not being properly closed — or a long-running transaction or query that is holding connections and blocking others. Connect to your Postgres instance and run SELECT pid, now() - pg_stat_activity.query_start AS duration, query, state FROM pg_stat_activity WHERE state != 'idle' ORDER BY duration DESC. Look for anything running longer than 30 seconds."
+
+[[turns]]
+role = "user"
+content = "Running that query. I can see 87 queries in lock_timeout state, all waiting. They are all blocked by a lock held by a single process with PID 4521. PID 4521 has been running for 9 minutes and is in state active."
+
+[[turns]]
+role = "assistant"
+content = "PID 4521 is holding a table lock and all those 87 queries are queued behind it. Terminate it immediately: SELECT pg_terminate_backend(4521); This will kill the blocking transaction, release the locks, and allow the queued queries to proceed. The connection pool should start recovering within seconds. Run it now."
+
+[[turns]]
+role = "user"
+content = "Terminated PID 4521. Error rate is already dropping. Down to 8 percent now and still falling. Pods are coming out of CrashLoopBackOff."
+
+[[turns]]
+role = "assistant"
+content = "Good, the service is recovering. While it stabilizes, pull the query that PID 4521 was running from pg_stat_statements or your slow query log. You need to identify the root cause before closing the incident. Also, as a guard against recurrence, set lock_timeout = 5s and statement_timeout = 30s on your application database role. This ensures future runaway queries get killed automatically rather than blocking the entire pool."
+
+[[turns]]
+role = "user"
+content = "Found the root cause. A developer ran a schema migration manually directly against production. The migration added an index to the payments table without a transaction timeout. It acquired an ACCESS EXCLUSIVE lock and held it for 8 minutes while building the index on the live table."
+
+[[turns]]
+role = "assistant"
+content = "Classic migration-related incident. For the runbook: require all migrations to use --lock-timeout 2000ms in your migration tool configuration. For large tables, never add indexes with the default CREATE INDEX — always use CREATE INDEX CONCURRENTLY, which does not hold an exclusive lock. Add a policy that migrations on high-traffic tables must go through a review step and run during a defined maintenance window unless using online schema change tooling like pg-osc or gh-ost."
+
+[[turns]]
+role = "user"
+content = "Service is fully recovered. Error rate back to baseline 0.1 percent. I am writing up the incident report. When did we resolve this?"
+
+[[turns]]
+role = "assistant"
+content = "Based on your timeline: incident started at 14:23 UTC, you terminated PID 4521 and observed recovery shortly after. If you are confirming resolution now, mark the resolution time in your incident report. The incident duration will be from 14:23 UTC to your current timestamp. Make sure to include the root cause, the immediate remediation, and the three follow-up action items: lock_timeout setting, migration policy update, and mandatory CONCURRENTLY for index creation."
+
+[[turns]]
+role = "user"
+content = "Marking incident resolved at 14:51 UTC. Total downtime was 28 minutes. Writing post-mortem now."
+
+[[turns]]
+role = "assistant"
+content = "28 minutes for a payment service incident is significant — document it thoroughly. The post-mortem should cover: detection time vs actual start time, why the lock was not caught by existing alerting, and the three preventive measures. Consider adding an alert on pg_stat_activity for any query holding a lock for more than 60 seconds — that would have caught PID 4521 within the first minute."
+
+[[questions]]
+question = "At what time UTC did the incident start?"
+key_facts = ["14:23", "14:23 UTC"]
+
+[[questions]]
+question = "What was the initial error rate on payment requests?"
+key_facts = ["34%", "34 percent"]
+
+[[questions]]
+question = "How many pods were in CrashLoopBackOff?"
+key_facts = ["3", "three"]
+
+[[questions]]
+question = "What was the maximum connection pool size?"
+key_facts = ["100", "max 100"]
+
+[[questions]]
+question = "What was the PID of the blocking database process?"
+key_facts = ["4521", "PID 4521"]
+
+[[questions]]
+question = "What Postgres function was used to terminate the blocking process?"
+key_facts = ["pg_terminate_backend"]
+
+[[questions]]
+question = "How long did the migration hold the lock?"
+key_facts = ["8 minutes", "8 mins"]
+
+[[questions]]
+question = "At what time was the incident resolved?"
+key_facts = ["14:51", "14:51 UTC"]
+
+[[questions]]
+question = "What was the total incident duration?"
+key_facts = ["28 minutes", "28 mins"]

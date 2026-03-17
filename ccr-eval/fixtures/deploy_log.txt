@@ -1,0 +1,33 @@
+[2024-01-15 09:00:01] INFO Starting deployment pipeline v2.4.1
+[2024-01-15 09:00:02] INFO Loading configuration from deploy.yaml
+[2024-01-15 09:00:03] INFO Connecting to registry.example.com
+[2024-01-15 09:00:04] INFO Pulling image myapp:2.4.1 (layer 1/12)
+[2024-01-15 09:00:05] INFO Pulling image myapp:2.4.1 (layer 2/12)
+[2024-01-15 09:00:06] INFO Pulling image myapp:2.4.1 (layer 3/12)
+[2024-01-15 09:00:07] INFO Pulling image myapp:2.4.1 (layer 4/12)
+[2024-01-15 09:00:08] INFO Pulling image myapp:2.4.1 (layer 5/12)
+[2024-01-15 09:00:09] INFO Pulling image myapp:2.4.1 (layer 6/12)
+[2024-01-15 09:00:10] INFO Pulling image myapp:2.4.1 (layer 7/12)
+[2024-01-15 09:00:11] INFO Pulling image myapp:2.4.1 (layer 8/12)
+[2024-01-15 09:00:12] INFO Pulling image myapp:2.4.1 (layer 9/12)
+[2024-01-15 09:00:13] INFO Pulling image myapp:2.4.1 (layer 10/12)
+[2024-01-15 09:00:14] INFO Pulling image myapp:2.4.1 (layer 11/12)
+[2024-01-15 09:00:15] INFO Pulling image myapp:2.4.1 (layer 12/12)
+[2024-01-15 09:00:16] INFO Image pulled successfully
+[2024-01-15 09:00:17] INFO Running health check on staging environment
+[2024-01-15 09:00:18] INFO Health check passed: staging.example.com:8080/health → 200 OK
+[2024-01-15 09:00:19] INFO Initiating blue-green swap for production cluster us-east-1
+[2024-01-15 09:00:20] INFO Draining connections from old instances (waiting 30s)
+[2024-01-15 09:00:50] INFO Old instances drained
+[2024-01-15 09:00:51] INFO Deploying to production: 6/6 pods updated
+[2024-01-15 09:00:52] INFO Pod myapp-prod-7d4f9b-xkj2p: Running
+[2024-01-15 09:00:53] INFO Pod myapp-prod-7d4f9b-mn8qt: Running
+[2024-01-15 09:00:54] INFO Pod myapp-prod-7d4f9b-p2wr5: Running
+[2024-01-15 09:00:55] INFO Pod myapp-prod-7d4f9b-qv9lc: Running
+[2024-01-15 09:00:56] INFO Pod myapp-prod-7d4f9b-rt3hs: Running
+[2024-01-15 09:00:57] INFO Pod myapp-prod-7d4f9b-wz1nm: Running
+[2024-01-15 09:00:58] INFO Post-deploy health check: production.example.com:443/health → 200 OK
+[2024-01-15 09:00:59] INFO Deployment SUCCEEDED: myapp v2.4.1 deployed to production us-east-1
+[2024-01-15 09:01:00] INFO Rollback window: 30 minutes. Previous version: v2.3.9
+[2024-01-15 09:01:01] INFO Notifying team channel #deployments
+[2024-01-15 09:01:02] INFO Pipeline complete. Duration: 61s

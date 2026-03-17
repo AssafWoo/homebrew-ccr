@@ -1,0 +1,25 @@
+[package]
+name = "ccr"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ccr"
+path = "src/main.rs"
+
+[dependencies]
+ccr-core = { path = "../ccr-core" }
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+clap.workspace = true
+dirs = "5"
+atty = "0.2"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"

@@ -1,0 +1,21 @@
+command_hint = ""
+
+[[questions]]
+question = "What batch job number failed?"
+key_facts = ["4821"]
+
+[[questions]]
+question = "What Python exception type was raised?"
+key_facts = ["TypeError"]
+
+[[questions]]
+question = "In which file and at what line did the error occur?"
+key_facts = ["transforms.py", "89"]
+
+[[questions]]
+question = "How many records were processed before the failure?"
+key_facts = ["30"]
+
+[[questions]]
+question = "What caused the TypeError — what operation failed?"
+key_facts = ["str", "float", "/", "division"]

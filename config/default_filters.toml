@@ -1,0 +1,37 @@
+[global]
+summarize_threshold_lines = 200
+head_lines = 30
+tail_lines = 30
+strip_ansi = true
+normalize_whitespace = true
+deduplicate_lines = true
+
+[commands.git]
+patterns = [
+  { regex = "^(Counting|Compressing|Receiving|Resolving) objects:.*", action = "Remove" },
+  { regex = "^remote: (Counting|Compressing|Enumerating).*", action = "Remove" },
+]
+
+[commands.cargo]
+patterns = [
+  { regex = "^\\s+Compiling \\S+ v[\\d.]+", action = "Collapse" },
+  { regex = "^\\s+Downloaded \\S+ v[\\d.]+", action = "Remove" },
+]
+
+[commands.npm]
+patterns = [
+  { regex = "^npm warn.*", action = "Remove" },
+  { regex = "^added \\d+ packages.*", action = { ReplaceWith = "[npm install complete]" } },
+  { regex = "^\\d+ packages are looking for funding.*", action = "Remove" },
+]
+
+[commands.docker]
+patterns = [
+  { regex = "^ ---> [a-f0-9]+$", action = "Remove" },
+  { regex = "^Removing intermediate container.*", action = "Remove" },
+]
+
+[tee]
+enabled = true
+mode = "aggressive"
+max_files = 20

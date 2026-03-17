@@ -1,0 +1,73 @@
+description = "Legal assistant helping a user review an employment contract"
+
+[[turns]]
+role = "user"
+content = "I got a job offer from DataCo, a San Francisco based data analytics firm. The contract has a non-compete clause and I am not sure if it is enforceable. Can you help me understand it?"
+
+[[turns]]
+role = "assistant"
+content = "Happy to help. The enforceability of non-competes depends heavily on the state. Since DataCo is in California, you are in luck — California Business and Professions Code Section 16600 makes virtually all non-compete agreements void and unenforceable as a matter of public policy. What does the clause actually say?"
+
+[[turns]]
+role = "user"
+content = "It says the restriction lasts 18 months, covers any company deriving more than 20% of revenue from data analytics, and applies within a 50 mile radius of DataCo headquarters. I would be working in-office in San Francisco."
+
+[[turns]]
+role = "assistant"
+content = "Because you would be employed and working in California, Section 16600 almost certainly voids that clause entirely. California courts have consistently struck down non-competes regardless of how narrow the scope is. The 18-month duration, the 20% revenue threshold, and the 50-mile radius are all irrelevant — the clause is unenforceable on its face. Sign the contract without worry on this point, but get written confirmation from their legal team if you want extra protection."
+
+[[turns]]
+role = "user"
+content = "What about the IP assignment clause? It reads: all inventions conceived or developed during employment or within 12 months after termination are assigned to DataCo."
+
+[[turns]]
+role = "assistant"
+content = "The 12-month post-termination assignment is aggressive and potentially overbroad. California Labor Code Section 2870 provides a critical carve-out: employers cannot claim ownership of inventions that were developed entirely on your own time, without using company resources, and that are unrelated to the company's business or anticipated research. You should negotiate to add explicit Section 2870 carve-out language to the contract, protecting your personal side projects. Without that carve-out, they may argue the broad 'all inventions' language applies."
+
+[[turns]]
+role = "user"
+content = "The severance terms are 2 weeks of base salary per year of service, capped at 8 weeks total. Is that market standard for a senior software engineer role?"
+
+[[turns]]
+role = "assistant"
+content = "For a senior software engineer in tech, 2 weeks per year is below market. Most mid-to-large tech companies offer 4 weeks per year, sometimes more at senior levels. The 8-week cap is quite restrictive — you could work there 5 years and still only receive 8 weeks. A senior engineer should push for at minimum 4 weeks per year of service with a cap of no less than 6 months. This is one of the more negotiable terms in tech employment contracts."
+
+[[turns]]
+role = "user"
+content = "There is also a clawback provision on the signing bonus. If I leave before 24 months, I must repay 50% of the signing bonus. Is this normal?"
+
+[[turns]]
+role = "assistant"
+content = "A clawback on a signing bonus is standard, but 24 months is on the longer end — 12 months is more common in tech. Repaying 50% regardless of when you leave within that window is also less favorable than a prorated schedule. Try to negotiate: reduce the clawback period to 12 months, and if they insist on 24 months, push for a prorated structure — 100% repayment if you leave in year one, 50% if you leave in year two, zero after that."
+
+[[turns]]
+role = "user"
+content = "One last thing. The contract has a mandatory arbitration clause for all disputes. Should I be concerned?"
+
+[[turns]]
+role = "assistant"
+content = "Mandatory arbitration is now standard in tech employment contracts and largely unavoidable. California AB 51 attempted to ban mandatory arbitration, but federal courts struck it down. The practical impact is that employment disputes go to a private arbitrator rather than a jury. This generally favors employers statistically. You can try to negotiate for mutual arbitration (binding on both parties equally) and for the company to pay all arbitration costs, but removal of the clause entirely is unlikely."
+
+[[questions]]
+question = "How long does the non-compete restriction last?"
+key_facts = ["18 months", "18-month"]
+
+[[questions]]
+question = "Which California code section makes the non-compete unenforceable?"
+key_facts = ["16600", "Section 16600"]
+
+[[questions]]
+question = "How long after termination does the IP assignment clause apply?"
+key_facts = ["12 months", "12-month"]
+
+[[questions]]
+question = "Which California Labor Code section protects personal inventions?"
+key_facts = ["2870", "Section 2870"]
+
+[[questions]]
+question = "How many weeks of severance per year of service does the contract offer?"
+key_facts = ["2 weeks", "two weeks"]
+
+[[questions]]
+question = "What percentage of the signing bonus must be repaid if leaving early?"
+key_facts = ["50%", "50 percent"]

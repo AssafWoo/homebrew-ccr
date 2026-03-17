@@ -1,0 +1,73 @@
+description = "Code review assistant helping a developer fix performance and memory bugs in Rust"
+
+[[turns]]
+role = "user"
+content = "I have a serious performance problem in my Rust service. The function process_batch is taking about 45 seconds to handle 10,000 records. This is way too slow for production — it needs to be under 2 seconds. I have been staring at this for hours and cannot figure it out."
+
+[[turns]]
+role = "assistant"
+content = "45 seconds for 10,000 records is very slow for Rust. That suggests an O(n²) problem or excessive allocations rather than a logic issue. Share the function and I will identify the bottleneck."
+
+[[turns]]
+role = "user"
+content = "Here is the relevant code. The outer loop iterates records, the inner loop does lookups. On line 47 I clone the data vector inside the inner loop to pass to the validator function. The validator does not mutate it, I just was not sure about borrowing."
+
+[[turns]]
+role = "assistant"
+content = "Found it. Line 47 is your problem — cloning a Vec inside the inner loop is O(n) per iteration, making the whole function O(n²) and allocating a new heap buffer for every single record pair. Since the validator does not mutate data, pass a shared reference instead: change data.clone() to &data. That turns the clone into a zero-cost borrow. This alone should drop your runtime from 45 seconds to under a second for 10,000 records."
+
+[[turns]]
+role = "user"
+content = "Thank you, that makes sense. There is another issue though. When I run the same function on 50,000 records the process gets killed by OOM. The machine has 16GB RAM and I cannot understand why a 50k record job would exhaust that."
+
+[[turns]]
+role = "assistant"
+content = "Look at line 89. You are calling .collect() on the intermediate_results iterator before processing it, which forces the entire result set into memory at once. For 50,000 records that could easily be several gigabytes depending on your record size. Replace the collect with a lazy iterator chain — process each element as it comes out of the iterator rather than buffering everything. Use .map() and .for_each() instead of collect-then-iterate."
+
+[[turns]]
+role = "user"
+content = "I also noticed I am using HashMap::new() everywhere. Is there a better way to initialize hashmaps in performance-sensitive code?"
+
+[[turns]]
+role = "assistant"
+content = "Yes. HashMap::new() starts with zero capacity and rehashes as it grows, which is expensive when you know the approximate size upfront. Use HashMap::with_capacity(n) where n is your expected number of entries — this pre-allocates and avoids rehashing. For even better performance on integer or small fixed-size keys, switch to FxHashMap from the rustc-hash crate. It uses a faster non-cryptographic hash and can be 2-3x faster than the default SipHash on hot paths."
+
+[[turns]]
+role = "user"
+content = "I applied your suggestions for the clone fix and the iterator change. Runtime is now down to 8 seconds on 10,000 records. Big improvement but still not hitting the 2 second target."
+
+[[turns]]
+role = "assistant"
+content = "Good progress. With the O(n²) eliminated, the remaining time is likely dominated by serialization. Profile with cargo flamegraph to confirm, but my best guess is serialize_record on line 134 — you are calling serde_json::to_string on each record individually inside the loop. Batch serialize into a single JSON array instead, or switch to a binary format like MessagePack if JSON is not a requirement. Also check if you are doing any synchronous I/O inside the loop."
+
+[[turns]]
+role = "user"
+content = "The flamegraph confirms it. serialize_record is 71% of CPU time. We do need JSON output. What is the fastest way to serialize a batch?"
+
+[[turns]]
+role = "assistant"
+content = "Use serde_json::to_writer with a BufWriter rather than to_string in a loop. to_string allocates a new String per call; to_writer streams directly into a buffered output. For a batch, serialize the entire Vec at once with serde_json::to_writer(&mut buf_writer, &records) — serde_json handles the array formatting and you get a single allocation. This should cut your serialization time by 60-70%."
+
+[[questions]]
+question = "What is the name of the slow function?"
+key_facts = ["process_batch"]
+
+[[questions]]
+question = "Which line number contained the O(n squared) clone issue?"
+key_facts = ["line 47", "47"]
+
+[[questions]]
+question = "Which line caused the out-of-memory problem?"
+key_facts = ["line 89", "89", "intermediate_results"]
+
+[[questions]]
+question = "What is the recommended alternative to HashMap::new for known sizes?"
+key_facts = ["with_capacity", "HashMap::with_capacity"]
+
+[[questions]]
+question = "What was the runtime after applying the first two fixes?"
+key_facts = ["8 seconds", "8s"]
+
+[[questions]]
+question = "Which line and function was identified as the serialization bottleneck?"
+key_facts = ["serialize_record", "line 134", "134"]

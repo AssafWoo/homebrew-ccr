@@ -1,0 +1,15 @@
+[package]
+name = "ccr-core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+tiktoken-rs.workspace = true
+once_cell = "1"
+fastembed = "4"

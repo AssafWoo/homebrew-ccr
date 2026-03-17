@@ -1,0 +1,73 @@
+description = "Company financial chatbot returning earnings data from APIs"
+
+[[turns]]
+role = "user"
+content = "I need to analyze TechCorp's latest quarterly results for my investment report. Can you pull the Q3 2024 financials?"
+
+[[turns]]
+role = "assistant"
+content = "Here is TechCorp Q3 2024: Total revenue $4.2B, up 12% year-over-year. Operating income $820M (19.5% margin). EPS came in at $2.47, beating consensus of $2.31. Free cash flow was $650M. The cloud segment was the standout, growing 34% to $1.8B."
+
+[[turns]]
+role = "user"
+content = "Great. What about hardware? I heard there were supply chain issues. Also how does Q3 compare to Q2 2024 sequentially?"
+
+[[turns]]
+role = "assistant"
+content = "Hardware revenue was $1.4B in Q3, down 3% year-over-year due to component shortages in their Taiwan supply chain. Q2 2024 total revenue was $3.9B, so Q3 improved $300M sequentially. Hardware was $1.5B in Q2, so the segment declined $100M quarter-over-quarter. The shortfall was partially offset by the strong cloud performance."
+
+[[turns]]
+role = "user"
+content = "What guidance did management give for Q4 2024? I want to build my model."
+
+[[turns]]
+role = "assistant"
+content = "Q4 2024 guidance: Revenue $4.4B to $4.6B, operating margin 18% to 20%. Cloud segment expected to accelerate to 38-40% growth as three major enterprise contracts go live. They flagged approximately $80M in FX headwinds assuming current dollar strength."
+
+[[turns]]
+role = "user"
+content = "Any notable risks management called out? Especially international exposure?"
+
+[[turns]]
+role = "assistant"
+content = "Key risks mentioned in the call: FX headwinds of roughly $80M, China revenue declined 8% year-over-year to $340M due to regulatory uncertainty, and two major customer contracts worth a combined $220M in ARR are up for renewal in Q1 2025. Management said renewal probability is high but timing could slip."
+
+[[turns]]
+role = "user"
+content = "What is the balance sheet situation? I need the debt picture."
+
+[[turns]]
+role = "assistant"
+content = "Net debt stands at $2.1B. They hold $3.4B in cash and short-term investments against $5.5B in long-term debt. Leverage ratio is 1.8x EBITDA, which is comfortable for their sector. Notably, they issued $500M in investment-grade bonds in September at a coupon of 4.2%, extending their maturity profile."
+
+[[turns]]
+role = "user"
+content = "The stock is trading at $87. Given all this data, does that price look reasonable?"
+
+[[turns]]
+role = "assistant"
+content = "At $87, TechCorp trades at approximately 18x forward PE and 12x EV/EBITDA, roughly in line with software peers. The cloud acceleration thesis supports a modest premium. Key risks to the valuation are the China exposure and the Q1 contract renewals. If both renew, the stock could re-rate to the $95-100 range."
+
+[[questions]]
+question = "What was TechCorp's total revenue in Q3 2024?"
+key_facts = ["4.2", "4.2B"]
+
+[[questions]]
+question = "By how much did the cloud segment grow year-over-year in Q3 2024?"
+key_facts = ["34%", "34 percent"]
+
+[[questions]]
+question = "What is the lower end of Q4 2024 revenue guidance?"
+key_facts = ["4.4", "4.4B"]
+
+[[questions]]
+question = "By how much did China revenue decline and what was the absolute amount?"
+key_facts = ["340", "8%"]
+
+[[questions]]
+question = "What is TechCorp's net debt?"
+key_facts = ["2.1", "2.1B"]
+
+[[questions]]
+question = "What coupon rate was the September bond issuance?"
+key_facts = ["4.2%", "4.2 percent"]
