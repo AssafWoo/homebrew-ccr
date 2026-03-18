@@ -329,7 +329,7 @@ Any command without a handler goes through four stages:
 
 **BERT scoring:** Each line is scored as `1 - cosine_similarity(embedding, centroid)`. High score = outlier = informative. Lines matching error/warning patterns are hard-kept regardless of score. Falls back to head+tail if the model is unavailable.
 
-Five additional BERT passes run on top of the base pipeline:
+Seven BERT passes run in the pipeline — all active in production:
 
 | Pass | Trigger | What it does |
 |------|---------|--------------|
