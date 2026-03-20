@@ -205,7 +205,7 @@ fn process_bash(hook_input: HookInput) -> Result<()> {
         .tool_input
         .get("command")
         .and_then(|v| v.as_str())
-        .and_then(|cmd| cmd.split_whitespace().nth(1))
+        .and_then(|cmd| cmd.split_whitespace().skip(1).find(|s| !s.starts_with('-')))
         .map(|s| s.to_string());
     let analytics = ccr_core::analytics::Analytics::new(
         input_tokens,

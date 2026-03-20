@@ -10,10 +10,8 @@ pub fn run(args: Vec<String>) -> Result<()> {
 
     let cmd_name = args[0].clone();
     // Extract subcommand: first non-flag argument after argv[0]
-    let subcommand = args
-        .get(1)
-        .filter(|s| !s.starts_with('-'))
-        .cloned();
+    // Skip flags like -C, --no-pager so "git -C /path status" → subcommand "status"
+    let subcommand = args.iter().skip(1).find(|s| !s.starts_with('-')).cloned();
 
     // SD: use cmd + subcommand as the delta/session key for better granularity.
     // "git status" history won't match "git log" history.
@@ -185,9 +183,19 @@ pub fn run(args: Vec<String>) -> Result<()> {
     };
 
     // B3: Session cache — check for semantically identical prior output, record new one.
+    // Skip for short outputs: the dedup message itself would be longer than the original.
     let sid = crate::session::session_id();
     let mut session = crate::session::SessionState::load(&sid);
-    let filtered = if let Ok(mut embeddings) =
+    let filtered = if ccr_core::tokens::count_tokens(&filtered) < 30 {
+        let tokens = ccr_core::tokens::count_tokens(&filtered);
+        if let Ok(mut embs) = ccr_core::summarizer::embed_batch(&[filtered.as_str()]) {
+            if let Some(emb) = embs.pop() {
+                session.record(&delta_key, emb, tokens, &filtered, is_state);
+                session.save(&sid);
+            }
+        }
+        filtered
+    } else if let Ok(mut embeddings) =
         ccr_core::summarizer::embed_batch(&[filtered.as_str()])
     {
         if let Some(emb) = embeddings.pop() {
