@@ -31,65 +31,88 @@ pub fn extract_intent() -> Option<String> {
         .max_by_key(|(t, _)| *t)?
         .1;
 
-    // Read the last 16 KB — enough for the most recent 2-3 turns
+    // Scan backwards in 256 KB chunks to find the last assistant message.
+    // Assistant messages can be preceded by very large tool-result lines (file reads,
+    // long command output), so a fixed small tail would miss them in large sessions.
     let mut file = std::fs::File::open(&jsonl_path).ok()?;
     let file_len = file.metadata().ok()?.len();
-    let tail_size: u64 = 16_384;
-    let offset = file_len.saturating_sub(tail_size);
-    file.seek(SeekFrom::Start(offset)).ok()?;
-    let mut tail = String::new();
-    file.read_to_string(&mut tail).ok()?;
 
-    // Parse lines, find the last assistant text block
+    const CHUNK: u64 = 262_144; // 256 KB per pass
+    const MAX_SCAN: u64 = 4 * CHUNK; // give up after 1 MB
+
     let mut last_text: Option<String> = None;
-    for line in tail.lines() {
-        if line.trim().is_empty() {
-            continue;
+    let mut scanned: u64 = 0;
+
+    while scanned < MAX_SCAN && last_text.is_none() {
+        let window = CHUNK.min(file_len.saturating_sub(scanned));
+        if window == 0 {
+            break;
         }
-        let Ok(obj) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if obj.get("type").and_then(|t| t.as_str()) != Some("assistant") {
-            continue;
-        }
-        let Some(content) = obj
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_array())
-        else {
-            continue;
-        };
-        for block in content {
-            if block.get("type").and_then(|t| t.as_str()) == Some("text") {
-                if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
-                    let trimmed = text.trim();
-                    if !trimmed.is_empty() {
-                        last_text = Some(trimmed.to_string());
+        let offset = file_len.saturating_sub(scanned + window);
+        file.seek(SeekFrom::Start(offset)).ok()?;
+        let mut buf = vec![0u8; window as usize];
+        file.read_exact(&mut buf).ok()?;
+
+        // Walk lines from the END of this chunk so we get the most recent first
+        let text = String::from_utf8_lossy(&buf);
+        let mut lines: Vec<&str> = text.lines().collect();
+        lines.reverse();
+
+        for line in lines {
+            if !line.contains("\"type\":\"assistant\"") {
+                continue;
+            }
+            let Ok(obj) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
+            if obj.get("type").and_then(|t| t.as_str()) != Some("assistant") {
+                continue;
+            }
+            let Some(content) = obj
+                .get("message")
+                .and_then(|m| m.get("content"))
+                .and_then(|c| c.as_array())
+            else {
+                continue;
+            };
+            for block in content {
+                if block.get("type").and_then(|t| t.as_str()) == Some("text") {
+                    if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                        let trimmed = t.trim();
+                        if !trimmed.is_empty() {
+                            last_text = Some(trimmed.to_string());
+                            break;
+                        }
                     }
                 }
             }
+            if last_text.is_some() {
+                break;
+            }
         }
+        scanned += window;
     }
 
     let text = last_text?;
     Some(clean_intent(&text))
 }
 
-/// Strip markdown, truncate to first sentence boundary within 256 chars.
+/// Strip markdown, return up to 256 chars. Truncates at a sentence boundary only
+/// if the text is longer than 256 chars — short responses are kept whole.
 fn clean_intent(text: &str) -> String {
-    // Strip markdown characters
     let stripped: String = text
         .chars()
         .filter(|c| !matches!(c, '*' | '`' | '#' | '>'))
         .collect();
     let stripped = stripped.trim();
 
-    // Work within 256 chars
-    let limit = 256.min(stripped.len());
-    let chunk = &stripped[..limit];
+    if stripped.len() <= 256 {
+        return stripped.to_string();
+    }
 
-    // Truncate at first sentence boundary
-    if let Some(pos) = chunk.find(|c| matches!(c, '.' | '?' | '!')) {
+    // Long text: truncate at sentence boundary nearest to char 256
+    let chunk = &stripped[..256];
+    if let Some(pos) = chunk.rfind(|c| matches!(c, '.' | '?' | '!')) {
         chunk[..=pos].trim().to_string()
     } else {
         chunk.trim().to_string()
