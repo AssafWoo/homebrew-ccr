@@ -98,11 +98,22 @@ fn print_summary(records: &[Analytics]) {
         .collect();
 
     // ── Header ──
+    let total_exec_ms: u64 = records.iter().filter_map(|r| r.duration_ms).sum();
+    let efficiency_bar = {
+        let filled = ((overall_pct / 100.0) * 24.0) as usize;
+        let empty = 24usize.saturating_sub(filled);
+        format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+    };
+
     println!("{}", "CCR Token Savings".if_supports_color(Stdout, |t| t.bold()));
     println!("{}", "═".repeat(49).if_supports_color(Stdout, |t| t.dimmed()));
     println!("  Runs:           {}", records.len());
     let green_bold = Style::new().bold().green();
     let yellow_bold = Style::new().bold().yellow();
+    println!(
+        "  Input tokens:   {}",
+        fmt_tokens(total_input).if_supports_color(Stdout, |t| t.dimmed()),
+    );
     println!(
         "  Tokens saved:   {}  ({})",
         fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.style(green_bold)),
@@ -112,6 +123,17 @@ fn print_summary(records: &[Analytics]) {
         "  Cost saved:     {}  (at {})",
         format!("~{}", fmt_cost(cost_saved)).if_supports_color(Stdout, |t| t.style(yellow_bold)),
         price_label.if_supports_color(Stdout, |t| t.dimmed()),
+    );
+    if total_exec_ms > 0 {
+        println!(
+            "  Exec time:      {}",
+            fmt_duration(total_exec_ms).if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+    println!(
+        "  Efficiency:     {} {}",
+        efficiency_bar.if_supports_color(Stdout, |t| t.green()),
+        format!("{:.1}%", overall_pct).if_supports_color(Stdout, |t| t.green()),
     );
 
     if !today.is_empty() {
@@ -418,6 +440,18 @@ fn fmt_cost(dollars: f64) -> String {
         format!("${:.3}", dollars)
     } else {
         format!("${:.2}", dollars)
+    }
+}
+
+fn fmt_duration(ms: u64) -> String {
+    if ms < 1_000 {
+        format!("{}ms", ms)
+    } else if ms < 60_000 {
+        format!("{:.1}s", ms as f64 / 1_000.0)
+    } else {
+        let mins = ms / 60_000;
+        let secs = (ms % 60_000) / 1_000;
+        format!("{}m {}s", mins, secs)
     }
 }
 
