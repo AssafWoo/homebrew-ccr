@@ -6,56 +6,27 @@
 
 ## Token Savings
 
-Estimates for a typical large project (200+ deps, 500+ tests, 50+ tracked files). Run `ccr gain` to see your live numbers.
+Real per-invocation averages from `ccr gain`, recorded on this project. Run `ccr gain` to see your own numbers.
 
-| Operation | Freq. | Without CCR | With CCR | Savings |
-|-----------|:-----:|------------:|---------:|:-------:|
-| `cargo build` | 3× | 150,000 | 1,500 | **−99%** |
-| `cargo test` | 5× | 100,000 | 10,000 | **−90%** |
-| `cargo check` | 5× | 25,000 | 2,500 | **−90%** |
-| `rustfmt` | 2× | 16,000 | 800 | **−95%** |
-| `read / cat` (files) | 8× | 80,000 | 16,000 | **−80%** |
-| `Read / Glob` (BERT pipeline) | 10× | 50,000 | 5,000 | **−90%** |
-| `ls` | 5× | 15,000 | 3,000 | **−80%** |
-| `git status` | 10× | 30,000 | 1,500 | **−95%** |
-| `git diff` | 5× | 50,000 | 12,500 | **−75%** |
-| `git log` | 5× | 12,500 | 2,500 | **−80%** |
-| `git add / commit / push` | 8× | 12,800 | 900 | **−93%** |
-| `tsc` / `eslint` | 5× | 15,000 | 1,350 | **−91%** |
-| `npm test` / `vitest` / `jest` | 5× | 25,000 | 3,000 | **−88%** |
-| `kubectl get` / `docker ps` | 3× | 3,600 | 540 | **−85%** |
-| `curl` (JSON API) | 3× | 7,500 | 300 | **−96%** |
-| **Session total** | | **~592,000** | **~61,000** | **−90%** |
+| Operation | Without CCR | With CCR | Savings |
+|-----------|------------:|---------:|:-------:|
+| `cargo build` | 3,039 | 99 | **−97%** |
+| `cargo test` | 754 | 194 | **−74%** |
+| `rustfmt` | 2,021 | 873 | −57% |
+| `read` (source files) | 1,500 | 645 | −57% |
+| `ls` | 258 | 154 | −40% |
+| `Read / Glob` (BERT, non-trivial)¹ | 223 | 94 | −58% |
+| `cargo check` | 231 | 185 | −20% |
+| `git diff` | 146 | 83 | −43% |
+| `git log`² | 211 | 182 | −14% |
+| `git status`² | 74 | 62 | −16% |
 
-**How each figure is achieved:**
+**Overall: −72%** across all recorded operations.
 
-- **`cargo build` / `cargo check` (−90–99%)** — The global regex pre-filter strips every `Compiling`, `Checking`, `Finished`, and `Fresh` line before anything else runs. A 200-dep build that produces 2,000+ progress lines collapses to the handful of errors or warnings that actually matter.
+¹ BERT pipeline runs ≥50 tokens. Smaller reads skip it entirely.
+² Git savings appear low because CCR injects `--porcelain` / `--oneline` *before* running the command, so the "without CCR" baseline in the table is already compact output from a tiny 5-file repo. On a project with 50 modified files, raw `git status` is ~1,000 tokens of file listings and help text; CCR collapses it to `Staged: N · Modified: N · Untracked: N` (~20 tokens). The savings scale with repo size.
 
-- **`cargo test` (−90%)** — The Cargo handler strips all `test foo ... ok` lines, retains failures and the summary line, then BERT further compresses verbose output from test setup/teardown. Large suites with hundreds of passing tests shrink dramatically.
-
-- **`rustfmt` (−95%)** — Strips all "unchanged" file lines; only formatting errors and the final diff survive.
-
-- **`read / cat` (−80%)** — File reads ≥50 lines go through BERT semantic compression. The current Claude task is used as the query, so lines relevant to what Claude is doing score highest and are kept; boilerplate and unchanged sections are dropped.
-
-- **`Read / Glob` BERT pipeline (−90%)** — Glob listings and large file reads pass through the full BERT pipeline: global pre-filter → command patterns → entropy-adjusted BERT budget → session dedup. The entropy gate tightens the budget further when content is repetitive (e.g. a list of similar filenames).
-
-- **`ls` (−80%)** — BERT clusters directory entries and keeps a representative sample. Deeply nested trees and large flat directories compress most aggressively.
-
-- **`git status` (−95%)** — The handler injects `--porcelain`, then collapses the entire listing to a single line: `Staged: N · Modified: N · Untracked: N`. A repo with 50 modified files goes from ~3,000 tokens to ~150.
-
-- **`git diff` (−75%)** — Hunk headers and context lines are kept; repetitive `+`/`-` lines in large mechanical diffs (generated code, lock files) are compressed by BERT.
-
-- **`git log` (−80%)** — The handler injects `--oneline`, dropping author names, dates, and full commit bodies. Only the short hash and subject line survive.
-
-- **`git add / commit / push` (−93%)** — Object-counting progress lines are stripped from `push`; commit output is collapsed to a 2-line summary (branch + short hash). The entire add/commit/push cycle for a typical feature branch produces under 100 tokens.
-
-- **`tsc` / `eslint` (−91%)** — Passing-file lines are stripped. Only diagnostics (errors and warnings with file:line context) pass through. Large TypeScript projects that emit thousands of status lines produce a compact error list.
-
-- **`npm test` / `vitest` / `jest` (−88%)** — Similar to `cargo test`: passing test names are dropped, failures and the summary are kept, BERT compresses verbose stack traces to the relevant frames.
-
-- **`kubectl get` / `docker ps` (−85%)** — Wide table output is re-formatted to keep only name, status, and age columns. Long image hashes, ports, and node names are dropped unless they contain anomalies.
-
-- **`curl` JSON API (−96%)** — BERT compresses the response body using the current Claude task as the query. A 500-line JSON payload where Claude only needs one or two fields collapses to those fields plus structural context.
+CCR also includes handlers for `tsc`, `eslint`, `jest`, `vitest`, `kubectl`, `docker`, `terraform`, `pytest`, `gh`, `curl`, and more — real numbers for those will appear in your own `ccr gain` once you use them.
 
 ---
 
