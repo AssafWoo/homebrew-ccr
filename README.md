@@ -6,27 +6,26 @@
 
 ## Token Savings
 
-Real per-invocation averages from `ccr gain`, recorded on this project. Run `ccr gain` to see your own numbers.
+Numbers from `ccr/tests/handler_benchmarks.rs` — each handler fed a realistic large-project fixture, tokens counted before and after. Run `cargo test -p ccr benchmark -- --nocapture` to reproduce, or `ccr gain` to see your own live data.
 
 | Operation | Without CCR | With CCR | Savings |
 |-----------|------------:|---------:|:-------:|
-| `cargo build` | 3,039 | 99 | **−97%** |
-| `cargo test` | 754 | 194 | **−74%** |
-| `rustfmt` | 2,021 | 873 | −57% |
-| `read` (source files) | 1,500 | 645 | −57% |
-| `ls` | 258 | 154 | −40% |
-| `Read / Glob` (BERT, non-trivial)¹ | 223 | 94 | −58% |
-| `cargo check` | 231 | 185 | −20% |
-| `git diff` | 146 | 83 | −43% |
-| `git log`² | 211 | 182 | −14% |
-| `git status`² | 74 | 62 | −16% |
+| `cargo build` (130 deps, 5 warnings) | 1,923 | 93 | **−95%** |
+| `cargo test` (200 tests, 2 failures) | 2,782 | 174 | **−94%** |
+| `ls` (project root) | 691 | 102 | **−85%** |
+| `git log` (25 commits) | 1,573 | 353 | **−78%** |
+| `git status` (10 staged, 40 modified, 8 untracked) | 650 | 184 | **−72%** |
+| `jest` (150 tests, 2 failures) | 330 | 114 | −65% |
+| `git push` | 173 | 106 | −39% |
+| `tsc` (20 errors, 5 files) | 666 | 509 | −24% |
+| `git diff` (3 files, ~60 lines changed) | 1,757 | 1,368 | −22% |
+| **Total** | **10,545** | **3,003** | **−72%** |
 
-**Overall: −72%** across all recorded operations.
-
-¹ BERT pipeline runs ≥50 tokens. Smaller reads skip it entirely.
-² Git savings appear low because CCR injects `--porcelain` / `--oneline` *before* running the command, so the "without CCR" baseline in the table is already compact output from a tiny 5-file repo. On a project with 50 modified files, raw `git status` is ~1,000 tokens of file listings and help text; CCR collapses it to `Staged: N · Modified: N · Untracked: N` (~20 tokens). The savings scale with repo size.
-
-CCR also includes handlers for `tsc`, `eslint`, `jest`, `vitest`, `kubectl`, `docker`, `terraform`, `pytest`, `gh`, `curl`, and more — real numbers for those will appear in your own `ccr gain` once you use them.
+**Notes:**
+- For `cargo build` / `cargo test`: "without CCR" is the standard human-readable output; CCR injects `--message-format json` internally to extract structured errors.
+- For `git status` / `git log`: "without CCR" is the full verbose format; CCR injects `--porcelain` / `--oneline` before running the command.
+- `tsc` and `git diff` compress less aggressively by design — errors are already compact, diffs preserve all changes. Savings increase with output size.
+- Run `ccr gain` after any session to see your real numbers.
 
 ---
 
