@@ -791,48 +791,93 @@ fn vitest_output() -> String {
     out
 }
 
-/// `eslint` — 10 files scanned, 7 clean, 3 with errors.
+/// `eslint` — realistic large monorepo scan: 40 files with errors, ~200 total problems.
 fn eslint_output() -> String {
     let mut out = String::new();
-    // 7 clean files produce no output in eslint (just blank lines / PASS)
-    // 3 files with errors
-    let files_with_errors = [
-        "src/api/users.ts",
-        "src/auth/middleware.ts",
-        "src/components/UserCard.tsx",
-    ];
-    let errors_per_file: &[&[(&str, &str, &str)]] = &[
-        &[
-            ("42:5", "error", "'userId' is defined but never used  no-unused-vars"),
-            ("67:12", "error", "Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any"),
-            ("89:3", "warning", "Expected a function body  arrow-body-style"),
-            ("103:8", "error", "Missing return type on function  @typescript-eslint/explicit-function-return-type"),
-            ("145:22", "error", "'Promise' not found in global scope  no-undef"),
-        ],
-        &[
-            ("15:7", "error", "Unexpected use of 'console'  no-console"),
-            ("28:14", "warning", "'next' is defined but never used  no-unused-vars"),
-            ("56:3", "error", "Do not use 'new' for side-effects  no-new"),
-            ("71:19", "error", "Require statement not part of import statement  @typescript-eslint/no-var-requires"),
-        ],
-        &[
-            ("12:1", "error", "'React' must be in scope  react/react-in-jsx-scope"),
-            ("34:26", "error", "img elements must have an alt prop  jsx-a11y/alt-text"),
-            ("78:5", "warning", "Do not pass children as props  react/no-children-prop"),
-        ],
+
+    // Realistic set of eslint rules that repeat across a codebase
+    let errors: &[(&str, &str, &str)] = &[
+        ("12:1",  "error",   "'React' must be in scope when using JSX  react/react-in-jsx-scope"),
+        ("18:3",  "error",   "Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any"),
+        ("23:14", "warning", "'useEffect' is defined but never used  no-unused-vars"),
+        ("31:7",  "error",   "Missing return type on function  @typescript-eslint/explicit-function-return-type"),
+        ("45:22", "error",   "'Promise' not found in global scope  no-undef"),
+        ("52:5",  "error",   "Unexpected use of 'console'  no-console"),
+        ("67:12", "warning", "Expected a function body  arrow-body-style"),
+        ("78:19", "error",   "Require statement not part of import statement  @typescript-eslint/no-var-requires"),
+        ("89:3",  "error",   "img elements must have an alt prop  jsx-a11y/alt-text"),
+        ("95:8",  "warning", "Do not pass children as props  react/no-children-prop"),
+        ("103:4", "error",   "Do not use 'new' for side-effects  no-new"),
+        ("115:9", "error",   "Promises must be awaited  @typescript-eslint/no-floating-promises"),
+        ("128:6", "warning", "Unexpected var, use let or const instead  no-var"),
+        ("134:1", "error",   "Parsing error: Unexpected token '?'"),
+        ("142:7", "error",   "'data' is assigned a value but never used  no-unused-vars"),
     ];
 
-    for (file, errors) in files_with_errors.iter().zip(errors_per_file.iter()) {
+    let files = [
+        "src/api/users.ts",
+        "src/api/products.ts",
+        "src/api/orders.ts",
+        "src/api/auth.ts",
+        "src/api/payments.ts",
+        "src/api/webhooks.ts",
+        "src/auth/middleware.ts",
+        "src/auth/jwt.ts",
+        "src/auth/session.ts",
+        "src/auth/oauth.ts",
+        "src/components/UserCard.tsx",
+        "src/components/ProductList.tsx",
+        "src/components/OrderTable.tsx",
+        "src/components/Dashboard.tsx",
+        "src/components/Header.tsx",
+        "src/components/Sidebar.tsx",
+        "src/components/Modal.tsx",
+        "src/components/forms/LoginForm.tsx",
+        "src/components/forms/CheckoutForm.tsx",
+        "src/components/forms/ProfileForm.tsx",
+        "src/hooks/useAuth.ts",
+        "src/hooks/useProducts.ts",
+        "src/hooks/useOrders.ts",
+        "src/hooks/useDebounce.ts",
+        "src/hooks/usePagination.ts",
+        "src/lib/db.ts",
+        "src/lib/redis.ts",
+        "src/lib/stripe.ts",
+        "src/lib/email.ts",
+        "src/lib/logger.ts",
+        "src/store/authSlice.ts",
+        "src/store/cartSlice.ts",
+        "src/store/productSlice.ts",
+        "src/store/orderSlice.ts",
+        "src/utils/format.ts",
+        "src/utils/validation.ts",
+        "src/utils/constants.ts",
+        "src/pages/index.tsx",
+        "src/pages/checkout.tsx",
+        "src/pages/profile.tsx",
+    ];
+
+    let mut total_errors = 0usize;
+    let mut total_warnings = 0usize;
+
+    for (i, file) in files.iter().enumerate() {
+        // Each file gets a rotating subset of errors (3-6 per file)
+        let start = i % errors.len();
+        let count = 3 + (i % 4);
         out.push_str(file);
         out.push('\n');
-        for (pos, sev, msg) in *errors {
+        for j in 0..count {
+            let (pos, sev, msg) = errors[(start + j) % errors.len()];
             out.push_str(&format!("  {}  {}  {}\n", pos, sev, msg));
+            if sev == "error" { total_errors += 1; } else { total_warnings += 1; }
         }
+        out.push_str(&format!("  ✖ {} problems\n", count));
         out.push('\n');
     }
+
     out.push_str(&format!(
         "✖ {} problems ({} errors, {} warnings)\n",
-        12, 10, 2
+        total_errors + total_warnings, total_errors, total_warnings
     ));
     out
 }
@@ -1512,8 +1557,7 @@ fn benchmark_handlers() {
         row!("tsc", tsc, tsc_raw, &["tsc"], 28.0),
         row!("jest", jest, jest_raw, &["jest"], 50.0),
         row!("vitest", vitest, vitest_raw, &["vitest"], 50.0),
-        // eslint: compact error output has near-zero savings; large clean codebases do better.
-        row!("eslint", eslint, eslint_raw, &["eslint"], 0.0),
+        row!("eslint", eslint, eslint_raw, &["eslint"], 60.0),
         row!("npm install", npm, npm_raw, &["npm","install"], 30.0),
         // ── Next.js ──────────────────────────────────────────────────────────
         row!("next build", next, next_raw, &["next","build"], 30.0),

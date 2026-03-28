@@ -39,7 +39,7 @@ Numbers from `ccr/tests/handler_benchmarks.rs` — each handler fed a realistic 
 | `mvn install` | 1,768 | 953 | −46% |
 | `golangci-lint` | 853 | 596 | −30% |
 | `tsc` | 666 | 470 | −29% |
-| `eslint` | 290 | 290 | 0% |
+| `eslint` | 4,393 | 974 | −78% |
 | **Total** | **46,239** | **9,439** | **−80%** |
 
 **Notes:**
@@ -47,7 +47,6 @@ Numbers from `ccr/tests/handler_benchmarks.rs` — each handler fed a realistic 
 - For `git status` / `git log`: "without CCR" is the full verbose format; CCR injects `--porcelain` / `--oneline` before running.
 - `git diff` fixture is a 10-file refactoring diff; context lines trimmed to 2 per side, total capped at 200.
 - `gradle build` collapses UP-TO-DATE task lines into a single count — savings scale with subproject count.
-- `eslint` fixture is 12 compact errors; savings increase significantly on large codebases where rule deduplication kicks in.
 - `tsc` groups errors by file and truncates verbose type messages; savings scale with error count.
 - Run `ccr gain` after any session to see your real numbers.
 
