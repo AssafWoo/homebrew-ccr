@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 use std::process::Command;
 
-const REPO: &str = "AssafWoo/Cool-Consumption-Reduction";
+const REPO: &str = "AssafWoo/homebrew-ccr";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn run() -> Result<()> {

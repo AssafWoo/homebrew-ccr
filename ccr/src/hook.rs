@@ -27,15 +27,15 @@ struct HookOutput {
     output: String,
 }
 
-pub fn run() -> Result<()> {
-    let mut input = String::new();
-    if io::stdin().read_to_string(&mut input).is_err() {
-        return Ok(());
-    }
-
-    let hook_input: HookInput = match serde_json::from_str(&input) {
+/// Core processing: takes raw hook stdin JSON, returns the JSON string to print
+/// (already serialised HookOutput), or `None` for pass-through.
+///
+/// Does NOT attempt the daemon socket — call this directly from the daemon
+/// server and from the fallback path in `run()`.
+pub fn process(input: &str) -> Result<Option<String>> {
+    let hook_input: HookInput = match serde_json::from_str(input) {
         Ok(v) => v,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     match hook_input.tool_name.as_str() {
@@ -46,9 +46,21 @@ pub fn run() -> Result<()> {
     }
 }
 
+pub fn run() -> Result<()> {
+    let mut raw = String::new();
+    if io::stdin().read_to_string(&mut raw).is_err() {
+        return Ok(());
+    }
+
+    if let Ok(Some(output)) = process(&raw) {
+        print!("{}", output);
+    }
+    Ok(())
+}
+
 // ── Bash tool handler ─────────────────────────────────────────────────────────
 
-fn process_bash(hook_input: HookInput) -> Result<()> {
+fn process_bash(hook_input: HookInput) -> Result<Option<String>> {
     let full_cmd = hook_input
         .tool_input
         .get("command")
@@ -58,7 +70,7 @@ fn process_bash(hook_input: HookInput) -> Result<()> {
     // Skip commands that already went through cmd/run.rs or cmd/filter.rs —
     // those paths record their own analytics and the output is already compressed.
     if full_cmd.trim_start().starts_with("ccr ") {
-        return Ok(());
+        return Ok(None);
     }
 
     // If command was rewritten by a wrapper (e.g. RTK: "rtk git status"),
@@ -94,19 +106,19 @@ fn process_bash(hook_input: HookInput) -> Result<()> {
     };
 
     if output_text.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     // Skip the entire pipeline (including BERT) for trivially small outputs.
     // Commands like `which`, `mkdir`, `wc` produce <15 tokens — nothing to compress.
     const MIN_PIPELINE_TOKENS: usize = 15;
     if ccr_core::tokens::count_tokens(&output_text) < MIN_PIPELINE_TOKENS {
-        return Ok(());
+        return Ok(None);
     }
 
     let config = match crate::config_loader::load_config() {
         Ok(c) => c,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     // IX: use Claude's last assistant message as the BERT query when available.
@@ -172,7 +184,7 @@ fn process_bash(hook_input: HookInput) -> Result<()> {
         historical_centroid.as_deref(),
     ) {
         Ok(r) => r,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     // NL: record what the pipeline suppressed so we can learn project noise.
@@ -277,14 +289,12 @@ fn process_bash(hook_input: HookInput) -> Result<()> {
     crate::util::append_analytics(&analytics);
 
     let hook_output = HookOutput { output: final_output };
-    println!("{}", serde_json::to_string(&hook_output)?);
-
-    Ok(())
+    Ok(Some(serde_json::to_string(&hook_output)?))
 }
 
 // ── Read tool handler ─────────────────────────────────────────────────────────
 
-fn process_read(hook_input: HookInput) -> Result<()> {
+fn process_read(hook_input: HookInput) -> Result<Option<String>> {
     let file_path = hook_input
         .tool_input
         .get("file_path")
@@ -299,23 +309,23 @@ fn process_read(hook_input: HookInput) -> Result<()> {
     };
 
     if output_text.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     // Binary file guard: if output contains null bytes, pass through unchanged
     if output_text.bytes().any(|b| b == 0) {
-        return Ok(());
+        return Ok(None);
     }
 
     // Short files pass through without compression
     let line_count = output_text.lines().count();
     if line_count < 50 {
-        return Ok(());
+        return Ok(None);
     }
 
     let config = match crate::config_loader::load_config() {
         Ok(c) => c,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     // Use file extension as command hint, intent as query
@@ -345,7 +355,7 @@ fn process_read(hook_input: HookInput) -> Result<()> {
         historical_centroid.as_deref(),
     ) {
         Ok(r) => r,
-        Err(_) => return Ok(()),
+        Err(_) => return Ok(None),
     };
 
     let _ = crate::zoom_store::save_blocks(&sid, result.zoom_blocks);
@@ -380,14 +390,12 @@ fn process_read(hook_input: HookInput) -> Result<()> {
     crate::util::append_analytics(&analytics);
 
     let hook_output = HookOutput { output: compressed };
-    println!("{}", serde_json::to_string(&hook_output)?);
-
-    Ok(())
+    Ok(Some(serde_json::to_string(&hook_output)?))
 }
 
 // ── Glob tool handler ─────────────────────────────────────────────────────────
 
-fn process_glob(hook_input: HookInput) -> Result<()> {
+fn process_glob(hook_input: HookInput) -> Result<Option<String>> {
     let pattern = hook_input
         .tool_input
         .get("pattern")
@@ -402,7 +410,7 @@ fn process_glob(hook_input: HookInput) -> Result<()> {
     };
 
     if output_text.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     let paths: Vec<&str> = output_text.lines().filter(|l| !l.trim().is_empty()).collect();
@@ -410,7 +418,7 @@ fn process_glob(hook_input: HookInput) -> Result<()> {
 
     // Short results pass through
     if total <= 20 {
-        return Ok(());
+        return Ok(None);
     }
 
     let sid = crate::session::session_id();
@@ -427,8 +435,7 @@ fn process_glob(hook_input: HookInput) -> Result<()> {
                     entry.turn, total
                 ),
             };
-            println!("{}", serde_json::to_string(&hook_output)?);
-            return Ok(());
+            return Ok(Some(serde_json::to_string(&hook_output)?));
         }
     }
 
@@ -500,14 +507,12 @@ fn process_glob(hook_input: HookInput) -> Result<()> {
     crate::util::append_analytics(&analytics);
 
     let hook_output = HookOutput { output: compressed };
-    println!("{}", serde_json::to_string(&hook_output)?);
-
-    Ok(())
+    Ok(Some(serde_json::to_string(&hook_output)?))
 }
 
 // ── Grep tool handler ─────────────────────────────────────────────────────────
 
-fn process_grep(hook_input: HookInput) -> Result<()> {
+fn process_grep(hook_input: HookInput) -> Result<Option<String>> {
     let pattern = hook_input
         .tool_input
         .get("pattern")
@@ -522,12 +527,12 @@ fn process_grep(hook_input: HookInput) -> Result<()> {
     };
 
     if output_text.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     // Short results pass through unchanged
     if output_text.lines().count() <= 10 {
-        return Ok(());
+        return Ok(None);
     }
 
     use crate::handlers::Handler;
@@ -547,8 +552,7 @@ fn process_grep(hook_input: HookInput) -> Result<()> {
     crate::util::append_analytics(&analytics);
 
     let hook_output = HookOutput { output: filtered };
-    println!("{}", serde_json::to_string(&hook_output)?);
-    Ok(())
+    Ok(Some(serde_json::to_string(&hook_output)?))
 }
 
 // ── Sentence dedup (C1) ───────────────────────────────────────────────────────

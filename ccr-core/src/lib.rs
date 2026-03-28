@@ -5,6 +5,7 @@ pub mod config;
 pub mod patterns;
 pub mod pipeline;
 pub mod sentence;
+pub mod simhash;
 pub mod summarizer;
 pub mod tokens;
 pub mod whitespace;

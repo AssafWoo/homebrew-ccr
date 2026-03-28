@@ -76,6 +76,15 @@ impl Pipeline {
             }
         }
 
+        // 3.5. SimHash near-duplicate deduplication.
+        // Collapses repetitive log-style lines (e.g. identical messages differing
+        // only in timestamps or sequence numbers) before the more expensive BERT stage.
+        // Uses the same threshold as BERT so SimHash acts as a fast pre-processor
+        // rather than a separate compression stage that activates at a different point.
+        if text.lines().count() >= self.config.global.summarize_threshold_lines {
+            text = crate::simhash::dedup_str(&text, crate::simhash::HAMMING_THRESHOLD);
+        }
+
         // 4. Summarize if too long
         if text.lines().count() > self.config.global.summarize_threshold_lines {
             let max_budget = self.config.global.head_lines + self.config.global.tail_lines;

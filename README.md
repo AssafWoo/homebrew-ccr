@@ -107,10 +107,18 @@ After `ccr init`, **this is fully automatic** — no changes to how you use Clau
 
 ## Installation
 
+### Homebrew (macOS — recommended)
+
+```bash
+brew tap AssafWoo/ccr
+brew install ccr
+ccr init
+```
+
 ### One-liner (macOS + Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AssafWoo/Cool-Consumption-Reduction/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/AssafWoo/homebrew-ccr/main/install.sh | bash
 ```
 
 Downloads the pre-built binary, installs to `~/.local/bin/ccr`, and runs `ccr init`.
@@ -124,7 +132,7 @@ export PATH="$HOME/.local/bin:$PATH"   # add to ~/.zshrc or ~/.bashrc
 ### From source
 
 ```bash
-git clone https://github.com/AssafWoo/Cool-Consumption-Reduction.git && cd Cool-Consumption-Reduction
+git clone https://github.com/AssafWoo/homebrew-ccr.git && cd homebrew-ccr
 cargo build --release
 cp target/release/ccr ~/.local/bin/
 ccr init
@@ -513,7 +521,7 @@ rm -rf ~/.local/share/ccr          # optional: cached data + analytics
 
 ## Contributing
 
-Open an issue or PR on [GitHub](https://github.com/AssafWoo/Cool-Consumption-Reduction). To add a handler: implement the `Handler` trait and register it in `ccr/src/handlers/mod.rs` — see `git.rs` as a template.
+Open an issue or PR on [GitHub](https://github.com/AssafWoo/homebrew-ccr). To add a handler: implement the `Handler` trait and register it in `ccr/src/handlers/mod.rs` — see `git.rs` as a template.
 
 ---
 
