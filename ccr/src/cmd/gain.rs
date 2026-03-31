@@ -165,22 +165,26 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
         let t_saved: usize = today.iter().map(|r| r.tokens_saved()).sum();
         let t_in: usize = today.iter().map(|r| r.input_tokens).sum();
         let t_out: usize = today.iter().map(|r| r.output_tokens).sum();
+        let t_cost = t_saved as f64 * price_per_token;
         println!(
-            "  Today:          {} runs · {} saved · {}",
+            "  Today:          {} runs · {} saved · {} · {}",
             today.len(),
             fmt_tokens(t_saved).if_supports_color(Stdout, |t| t.cyan()),
             format!("{:.1}%", savings_pct(t_in, t_out)).if_supports_color(Stdout, |t| t.cyan()),
+            format!("~{}", fmt_cost(t_cost)).if_supports_color(Stdout, |t| t.yellow()),
         );
     }
     if week.len() > today.len() {
         let w_saved: usize = week.iter().map(|r| r.tokens_saved()).sum();
         let w_in: usize = week.iter().map(|r| r.input_tokens).sum();
         let w_out: usize = week.iter().map(|r| r.output_tokens).sum();
+        let w_cost = w_saved as f64 * price_per_token;
         println!(
-            "  7-day:          {} runs · {} saved · {}",
+            "  7-day:          {} runs · {} saved · {} · {}",
             week.len(),
             fmt_tokens(w_saved).if_supports_color(Stdout, |t| t.cyan()),
             format!("{:.1}%", savings_pct(w_in, w_out)).if_supports_color(Stdout, |t| t.cyan()),
+            format!("~{}", fmt_cost(w_cost)).if_supports_color(Stdout, |t| t.yellow()),
         );
     }
 
