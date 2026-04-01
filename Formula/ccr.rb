@@ -4,6 +4,8 @@ class Ccr < Formula
   license "MIT"
   version "0.5.27"
 
+  depends_on "jq"
+
   # Prebuilt binaries — no Rust/LLVM build dependencies, installs in seconds.
   # Each tarball contains the ccr binary + libonnxruntime dylib bundled together.
   on_arm do
