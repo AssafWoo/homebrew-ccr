@@ -18,6 +18,9 @@ pub struct Analytics {
     /// True when the result was served from the post-pipeline result cache.
     #[serde(default)]
     pub cache_hit: bool,
+    /// Agent that produced this record: "claude" | "cursor" | None (legacy = claude)
+    #[serde(default)]
+    pub agent: Option<String>,
 }
 
 impl Analytics {
@@ -59,6 +62,7 @@ impl Analytics {
             subcommand,
             duration_ms,
             cache_hit: false,
+            agent: None,
         }
     }
 

@@ -48,10 +48,20 @@ pub fn process(input: &str) -> Result<Option<String>> {
 }
 
 pub fn run() -> Result<()> {
-    // Integrity check: warn and exit if hook script has been tampered with
+    // Integrity check: warn and exit if hook script has been tampered with.
+    // CCR_AGENT env var is set by Cursor's PostToolUse hook command; default = claude.
+    let agent = std::env::var("CCR_AGENT").unwrap_or_else(|_| "claude".to_string());
     if let Some(home) = dirs::home_dir() {
-        let script  = home.join(".claude").join("hooks").join("ccr-rewrite.sh");
-        let hashdir = home.join(".claude").join("hooks");
+        let (script, hashdir) = match agent.as_str() {
+            "cursor" => (
+                home.join(".cursor").join("hooks").join("ccr-rewrite.sh"),
+                home.join(".cursor").join("hooks"),
+            ),
+            _ => (
+                home.join(".claude").join("hooks").join("ccr-rewrite.sh"),
+                home.join(".claude").join("hooks"),
+            ),
+        };
         crate::integrity::runtime_check(&script, &hashdir);
     }
 

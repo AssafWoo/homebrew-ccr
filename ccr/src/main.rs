@@ -1,4 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(ValueEnum, Clone, PartialEq, Debug, Default)]
+enum AgentTarget {
+    #[default]
+    Claude,
+    Cursor,
+}
 
 mod cmd;
 mod config_loader;
@@ -44,11 +51,14 @@ enum Commands {
     /// PostToolUse hook mode for Claude Code (hidden)
     #[command(hide = true)]
     Hook,
-    /// Install CCR hooks into Claude Code settings.json
+    /// Install CCR hooks into Claude Code or Cursor
     Init {
         /// Remove CCR hooks and scripts instead of installing them
         #[arg(long)]
         uninstall: bool,
+        /// Target agent to install hooks for
+        #[arg(long, value_enum, default_value = "claude")]
+        agent: AgentTarget,
     },
     /// Execute a command through CCR's specialized handlers
     Run {
@@ -141,7 +151,12 @@ fn main() {
         Commands::Filter { command } => cmd::filter::run(command),
         Commands::Gain { history, days, breakdown } => cmd::gain::run(history, days, breakdown),
         Commands::Hook => hook::run(),
-        Commands::Init { uninstall } => if uninstall { uninstall_ccr() } else { init() },
+        Commands::Init { uninstall, agent } => match (uninstall, agent) {
+            (true,  AgentTarget::Claude) => uninstall_ccr(),
+            (true,  AgentTarget::Cursor) => uninstall_cursor(),
+            (false, AgentTarget::Claude) => init(),
+            (false, AgentTarget::Cursor) => init_cursor(),
+        },
         Commands::Run { args } => cmd::run::run(args),
         Commands::Rewrite { command } => cmd::rewrite::run(command),
         Commands::Proxy { args } => cmd::proxy::run(args),
@@ -348,6 +363,230 @@ fn uninstall_ccr() -> anyhow::Result<()> {
     println!("  cargo uninstall ccr         # if installed via cargo");
 
     Ok(())
+}
+
+fn init_cursor() -> anyhow::Result<()> {
+    use serde_json::Value;
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+
+    let cursor_dir = home.join(".cursor");
+
+    // Only install if Cursor is already present on this machine.
+    // Avoids creating a stray ~/.cursor/ on machines that don't use Cursor.
+    if !cursor_dir.exists() {
+        println!("Cursor not found (no ~/.cursor directory) — skipping Cursor install.");
+        println!("If you install Cursor later, run: ccr init --agent cursor");
+        return Ok(());
+    }
+
+    let hooks_dir = cursor_dir.join("hooks");
+    let hooks_json_path = cursor_dir.join("hooks.json");
+
+    std::fs::create_dir_all(&hooks_dir)?;
+
+    let ccr_bin = std::env::current_exe()
+        .ok()
+        .unwrap_or_else(|| std::path::PathBuf::from("ccr"));
+    let ccr_bin_str = ccr_bin.to_string_lossy();
+
+    // Cursor preToolUse hook: rewrites commands using Cursor's JSON format.
+    // Must return valid JSON on ALL code paths (Cursor rejects empty output).
+    let rewrite_script = format!(r#"#!/usr/bin/env bash
+# ccr-hook-version: 1
+# CCR Cursor hook — rewrites commands for token savings.
+# Cursor requires JSON on ALL code paths — returns {{}} when no rewrite applies.
+INPUT=$(cat)
+CMD=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+if [ -z "$CMD" ]; then echo '{{}}'; exit 0; fi
+REWRITTEN=$(CCR_SESSION_ID=$PPID "{ccr_bin_str}" rewrite "$CMD" 2>/dev/null) || {{ echo '{{}}'; exit 0; }}
+if [ "$CMD" = "$REWRITTEN" ]; then echo '{{}}'; exit 0; fi
+ORIGINAL=$(echo "$INPUT" | jq -c '.tool_input')
+UPDATED=$(echo "$ORIGINAL" | jq --arg cmd "$REWRITTEN" '.command = $cmd')
+jq -n --argjson updated "$UPDATED" '{{"permission":"allow","updated_input":$updated}}'
+"#, ccr_bin_str = ccr_bin_str);
+
+    let script_path = hooks_dir.join("ccr-rewrite.sh");
+    std::fs::write(&script_path, &rewrite_script)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms)?;
+    }
+
+    // Make hash file writable before (re-)writing the baseline, in case a previous
+    // init set it to 0o444 read-only.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let hash_file = hooks_dir.join(".ccr-hook.sha256");
+        if hash_file.exists() {
+            if let Ok(meta) = std::fs::metadata(&hash_file) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(&hash_file, perms);
+            }
+        }
+    }
+    if let Err(e) = crate::integrity::write_baseline(&script_path, &hooks_dir) {
+        eprintln!("warning: could not write integrity baseline: {e}");
+    }
+
+    // Load or create hooks.json
+    let mut root: Value = if hooks_json_path.exists() {
+        let content = std::fs::read_to_string(&hooks_json_path)?;
+        serde_json::from_str(&content).unwrap_or(serde_json::json!({"version": 1}))
+    } else {
+        serde_json::json!({"version": 1})
+    };
+
+    // Strip any existing CCR entries first so re-running init with a new binary
+    // path replaces rather than accumulates stale entries.
+    // Use get_mut (not IndexMut) to avoid inserting phantom null keys.
+    for event in &["preToolUse", "postToolUse"] {
+        if let Some(arr) = root
+            .get_mut("hooks")
+            .and_then(|h| h.get_mut(*event))
+            .and_then(|e| e.as_array_mut())
+        {
+            arr.retain(|e| !e["command"].as_str().unwrap_or("").contains("ccr"));
+        }
+    }
+
+    // PreToolUse: command rewriter
+    cursor_insert_hook_entry(
+        &mut root,
+        "preToolUse",
+        serde_json::json!({"command": "./hooks/ccr-rewrite.sh", "matcher": "Shell"}),
+    );
+
+    // PostToolUse: output compressor (CCR_AGENT=cursor so hook.rs checks ~/.cursor integrity)
+    let hook_cmd = format!("CCR_SESSION_ID=$PPID CCR_AGENT=cursor {} hook", ccr_bin_str);
+    cursor_insert_hook_entry(
+        &mut root,
+        "postToolUse",
+        serde_json::json!({"command": hook_cmd, "matcher": "Bash"}),
+    );
+    cursor_insert_hook_entry(
+        &mut root,
+        "postToolUse",
+        serde_json::json!({"command": hook_cmd, "matcher": "Read"}),
+    );
+    cursor_insert_hook_entry(
+        &mut root,
+        "postToolUse",
+        serde_json::json!({"command": hook_cmd, "matcher": "Glob"}),
+    );
+
+    std::fs::write(&hooks_json_path, serde_json::to_string_pretty(&root)?)?;
+
+    println!("CCR hooks installed (Cursor):");
+    println!("  PreToolUse:  {} → {}", script_path.display(), hooks_json_path.display());
+    println!("  PostToolUse: {} → {}", hook_cmd, hooks_json_path.display());
+
+    println!();
+    if let Err(e) = ccr_core::summarizer::preload_model() {
+        eprintln!("warning: could not pre-load BERT model: {e}");
+        eprintln!("         it will download automatically on first use.");
+    }
+
+    Ok(())
+}
+
+fn uninstall_cursor() -> anyhow::Result<()> {
+    use serde_json::Value;
+
+    let home = dirs::home_dir()
+        .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
+
+    let cursor_dir = home.join(".cursor");
+    let hooks_dir = cursor_dir.join("hooks");
+    let script_path = hooks_dir.join("ccr-rewrite.sh");
+    let hash_file_path = hooks_dir.join(".ccr-hook.sha256");
+    let hooks_json_path = cursor_dir.join("hooks.json");
+
+    if script_path.exists() {
+        std::fs::remove_file(&script_path)?;
+        println!("Removed {}", script_path.display());
+    }
+
+    if hash_file_path.exists() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&hash_file_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(&hash_file_path, perms);
+            }
+        }
+        std::fs::remove_file(&hash_file_path)?;
+        println!("Removed {}", hash_file_path.display());
+    }
+
+    if hooks_json_path.exists() {
+        let content = std::fs::read_to_string(&hooks_json_path)?;
+        let mut root: Value = serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
+
+        for event in &["preToolUse", "postToolUse"] {
+            if let Some(arr) = root["hooks"][event].as_array_mut() {
+                arr.retain(|entry| {
+                    !entry["command"].as_str().unwrap_or("").contains("ccr")
+                });
+            }
+        }
+
+        std::fs::write(&hooks_json_path, serde_json::to_string_pretty(&root)?)?;
+        println!("Removed CCR hooks from {}", hooks_json_path.display());
+    }
+
+    println!();
+    println!("CCR Cursor hooks removed. The binary itself can be uninstalled with:");
+    println!("  brew uninstall ccr          # if installed via Homebrew");
+    println!("  cargo uninstall ccr         # if installed via cargo");
+
+    Ok(())
+}
+
+/// Add an entry to root["hooks"][event] array (Cursor flat format: {{command, matcher}}).
+/// Returns true if actually added (false = already present by command match).
+fn cursor_insert_hook_entry(
+    root: &mut serde_json::Value,
+    event: &str,
+    entry: serde_json::Value,
+) -> bool {
+    let command = entry["command"].as_str().unwrap_or("").to_string();
+
+    let root_obj = match root.as_object_mut() {
+        Some(obj) => obj,
+        None => return false,
+    };
+    root_obj.entry("version").or_insert(serde_json::json!(1));
+    let hooks = root_obj
+        .entry("hooks")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+        .expect("hooks must be an object");
+    let arr = hooks
+        .entry(event)
+        .or_insert_with(|| serde_json::json!([]))
+        .as_array_mut()
+        .expect("event must be an array");
+
+    let matcher = entry["matcher"].as_str().unwrap_or("").to_string();
+    let already = arr.iter().any(|e| {
+        e["command"].as_str().unwrap_or("") == command
+            && e["matcher"].as_str().unwrap_or("") == matcher
+    });
+    if !already {
+        arr.push(entry);
+        true
+    } else {
+        false
+    }
 }
 
 /// Add a hook command to an existing hook-event array without removing other entries.
