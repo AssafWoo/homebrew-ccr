@@ -2,20 +2,20 @@ class Ccr < Formula
   desc "LLM token optimizer for Claude Code — 60-90% token savings on dev operations"
   homepage "https://github.com/AssafWoo/homebrew-ccr"
   license "MIT"
-  version "0.5.27"
+  version "0.5.28"
 
   depends_on "jq"
 
   # Prebuilt binaries — no Rust/LLVM build dependencies, installs in seconds.
   # Each tarball contains the ccr binary + libonnxruntime dylib bundled together.
   on_arm do
-    url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.5.27/ccr-macos-arm64.tar.gz"
-    sha256 "9c22ac33996ddd4d29738d58775efb940d58eba12709bae72e68dec2ae622a5b"
+    url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.5.28/ccr-macos-arm64.tar.gz"
+    sha256 "435c32a4e0770f2e68887bb499ce9345fd2bdcd540639bff3105a37907257bb9"
   end
 
   on_intel do
-    url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.5.27/ccr-macos-x86_64.tar.gz"
-    sha256 "694019d4853f0d9b7ef8c7762a427d86248a1ef1899f8ac90d798ed1bc5172c4"
+    url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.5.28/ccr-macos-x86_64.tar.gz"
+    sha256 "86458e80427941a2eebd3d6808c659a35d17e645837213ce428c4908a688d3aa"
   end
 
   def install
