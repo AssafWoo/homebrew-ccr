@@ -25,6 +25,8 @@ clap.workspace = true
 dirs = "5"
 owo-colors.workspace = true
 atty = "0.2"
+sha2.workspace = true
+hex.workspace  = true
 
 [dev-dependencies]
 assert_cmd = "2"

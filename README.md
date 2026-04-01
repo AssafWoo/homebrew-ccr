@@ -68,7 +68,6 @@ Numbers from `ccr/tests/handler_benchmarks.rs` — each handler fed a realistic 
 - [Commands](#commands)
 - [Handlers](#handlers)
 - [Pipeline Architecture](#pipeline-architecture)
-- [BERT Routing](#bert-routing)
 - [Configuration](#configuration)
 - [User-Defined Filters](#user-defined-filters)
 - [Session Intelligence](#session-intelligence)
@@ -98,17 +97,7 @@ Claude runs: git status  (seen recently)
 
 After `ccr init`, **this is fully automatic** — no changes to how you use Claude Code.
 
-### Privacy model
-
-CCR is a local-only tool. It never sends data anywhere.
-
-| What CCR touches | What it reads | Why |
-|-----------------|---------------|-----|
-| Tool output (hook) | stdout/stderr of commands you run (`cargo build`, `git status`, …) | Compress it before Claude sees it |
-| Claude's last message (BERT only) | The single most-recent message in the active session | Used as a relevance query so compression keeps lines relevant to your current task — read-only, never stored |
-| Conversation files (`ccr discover` only) | Local JSONL files Claude Code writes to `~/.claude/` | Find which commands ran without a handler — **opt-in, never automatic** |
-
-The hook **never reads your prompts or full conversation history.** Everything stays on your machine.
+CCR is a local-only tool — it never sends data anywhere. The hook reads only tool stdout/stderr and (for BERT relevance queries) Claude's single most-recent message. It never reads your prompts or full conversation history.
 
 ---
 
@@ -218,6 +207,32 @@ ccr expand --list     # list all available IDs in this session
 
 When CCR collapses output, it embeds an ID: `[5 lines collapsed — ccr expand ZI_3]`
 
+### ccr read-file
+
+```bash
+ccr read-file src/main.rs --level auto          # auto-select based on size + extension
+ccr read-file src/large_module.rs --level aggressive
+cat file.py | ccr read-file - --level strip     # stdin mode
+```
+
+Diagnostic command that applies the read-level filter and prints token savings to stderr. Useful for testing before enabling `[read]` in config.
+
+Levels: `passthrough` (default, no change), `auto` (size-adaptive), `strip` (remove comments), `aggressive` (signatures + imports only).
+
+### ccr verify
+
+```bash
+ccr verify
+```
+
+Checks the SHA-256 integrity of the installed hook script (`~/.claude/hooks/ccr-rewrite.sh`) against the baseline written by `ccr init`. Exits 1 and prints `ERR Tampered` if the script has been modified.
+
+```
+OK  Verified   /Users/you/.claude/hooks/ccr-rewrite.sh
+```
+
+The baseline (`~/.claude/hooks/.ccr-hook.sha256`) is automatically written or updated each time you run `ccr init`. At hook invocation time, CCR silently verifies the script and exits 1 with a warning if tampering is detected.
+
 ### ccr filter / ccr run / ccr proxy
 
 ```bash
@@ -230,7 +245,7 @@ ccr proxy git status  # run raw (no filtering), record analytics baseline
 
 ## Handlers
 
-44 handlers (55+ command aliases) in `ccr/src/handlers/`. Lookup cascade:
+48 handlers (60+ command aliases) in `ccr/src/handlers/`. Lookup cascade:
 
 1. **Level 0 — User filters** — `.ccr/filters.toml` or `~/.config/ccr/filters.toml` (overrides built-in)
 2. **Level 1 — Exact match** — direct command name
@@ -255,6 +270,14 @@ ccr proxy git status  # run raw (no filtering), record analytics baseline
 | **stylelint** | `stylelint` | Issues grouped by file, caps at 40 + `[+N more]`, summary count kept. |
 | **biome** | `biome`, `@biomejs/biome` | Code context snippets (│/^^^) stripped; keeps file:line, rule name, and message. |
 
+**Ruby**
+
+| Handler | Keys | Key behavior |
+|---------|------|-------------|
+| **rspec** | `rspec` | Injects `--format json`; parses example-level failures with message + location; text fallback. |
+| **rubocop** | `rubocop`, `rubocop-rails` | Injects `--format json`; offenses grouped by severity (error → warning → convention, capped); text fallback. |
+| **rake** | `rake`, `bundle` | Minitest output filter: failure/error blocks + summary line; drops passing test lines. |
+
 **Python**
 
 | Handler | Keys | Key behavior |
@@ -273,9 +296,9 @@ ccr proxy git status  # run raw (no filtering), record analytics baseline
 | **kubectl** | `kubectl`, `k`, `minikube`, `kind` | `get`: smart column selection (NAME+STATUS+READY, drops AGE/RESTARTS). `logs`: BERT anomaly. `describe`: key sections. |
 | **gh** | `gh` | `pr list`/`issue list`: compact tables. `pr view`: strips HTML noise. Passthrough for `--json`/`--jq`. |
 | **terraform** | `terraform`, `tofu` | `plan`: `+`/`-`/`~` + summary. `validate`: short-circuits on success. |
-| **aws** | `aws`, `gcloud`, `az` | Action-specific resource extraction (ec2, lambda, iam, s3api). JSON → schema fallback. |
+| **aws** | `aws`, `gcloud`, `az` | Action-specific resource extraction (ec2, lambda, iam, s3api, sts). `--output json` injected only for read-only action prefixes (`describe-*`, `list-*`, `get-*`). JSON → schema fallback. |
 | **make** | `make`, `gmake`, `ninja` | "Nothing to be done" short-circuit. Keeps errors + recipe failures. |
-| **go** | `go` | `build`/`vet`: errors only. `test`: FAIL blocks + `[N tests passed]` summary. Drops `=== RUN`/`--- PASS`/`coverage:` lines. |
+| **go** | `go` | `build`/`vet`: errors only. `test`: injects `-json`, parses structured events; FAIL blocks + `[N tests passed]` summary. Text fallback when `-json` not injected. Drops `=== RUN`/`--- PASS`/`coverage:` lines. |
 | **golangci-lint** | `golangci-lint`, `golangci_lint` | Diagnostics grouped by file; INFO/DEBUG runner noise dropped. |
 | **prisma** | `prisma` | `generate`: client summary. `migrate`: migration names. `db push`: sync status. |
 | **mvn** | `mvn`, `mvnw`, `./mvnw` | Drops `[INFO]` noise; keeps errors + reactor summary. |
@@ -289,8 +312,8 @@ ccr proxy git status  # run raw (no filtering), record analytics baseline
 | **cargo** | `cargo` | `build`/`check`/`clippy`: JSON format, errors + warning count. `test`: failures + summary. Repeated Clippy rules grouped `[rule ×N]`. |
 | **git** | `git` | `status`: Staged/Modified/Untracked counts. `log` injects `--oneline`, caps 20. `diff`: 2 context lines per side, 200-line total cap, per-file `[+N -M]` tally. Push/pull success short-circuits. |
 | **curl** | `curl` | JSON → type schema. Non-JSON: cap 30 lines. |
-| **docker** | `docker`, `docker-compose` | `logs`: ANSI strip + timestamp normalization before BERT. `ps`/`images`: compact table. |
-| **npm/yarn** | `npm`, `yarn` | `install`: package count. Strips boilerplate (`> project@...`, `npm WARN`, spinners). |
+| **docker** | `docker`, `docker-compose` | `logs`: ANSI strip + timestamp normalization before BERT. `ps`: injects `--format table` (ID/Image/Status/Names). `images`: injects `--format table` (Repository/Tag/Size). |
+| **npm/yarn** | `npm`, `yarn` | `install`: package count. Strips boilerplate (`> project@...`, `npm WARN`, spinners). Unknown subcommands auto-prefixed with `run` (e.g. `npm build` → `npm run build`). |
 | **pnpm** | `pnpm`, `pnpx` | `install`: summary; drops progress bars. `run`/`exec`: errors + tail. |
 | **clippy** | `clippy`, `cargo-clippy` | Rustc-style diagnostics filtered; duplicate warnings collapsed. |
 | **journalctl** | `journalctl` | Injects `--no-pager -n 200`. BERT anomaly scoring. |
@@ -304,6 +327,7 @@ ccr proxy git status  # run raw (no filtering), record analytics baseline
 | **cat** | `cat` | ≤100 lines: pass through. 101–500: head/tail. >500: BERT. |
 | **grep / rg** | `grep`, `rg` | Compact paths (>50 chars), per-file 25-match cap. |
 | **find** | `find` | Strips common prefix, groups by directory, caps at 50. |
+| **wget** | `wget` | Strips `N%[=====]` progress bars and dot-progress lines; preserves status and completion lines. |
 | **json** | `json` | Parses output as JSON, returns depth-limited type schema if smaller. |
 | **log** | `log` | Timestamp/UUID/hex normalization, dedup `[×N]`, error/warning summary block. |
 
@@ -332,41 +356,11 @@ Every output goes through these steps in order:
 
 **Minimum token gate (hook level):** Outputs under 15 tokens skip the entire pipeline — no BERT, no analytics recording.
 
-### BERT Passes (step 4b)
-
-| Pass | What it does |
-|------|-------------|
-| **Noise pre-filter** | Removes project-specific boilerplate promoted by noise learning |
-| **Semantic clustering** | Near-identical lines (cosine > 0.85) collapse to one representative |
-| **Entropy budget** | Diverse content gets more lines; uniform output gets a tight budget |
-| **Anomaly scoring** | Scores each line against centroid + intent query; keeps top-N |
-| **Contextual anchors** | Re-adds semantic neighbors of kept lines (e.g. function signature above error) |
-| **Historical centroid** | Scores against rolling mean of prior runs — new output stands out more |
-| **Delta compression** | Suppresses unchanged lines vs previous run; surfaces new ones with `[Δ from turn N]` |
+Step 4b runs up to 7 BERT passes: noise pre-filter, semantic clustering, entropy budgeting, anomaly scoring, contextual anchors, historical centroid scoring, and delta compression. If BERT is unavailable, CCR falls back to head + tail.
 
 ### Fallback
 
 If BERT is unavailable or output is short, CCR falls back to head + tail. No crash, no empty output.
-
----
-
-## BERT Routing
-
-Unknown commands (not in the exact/alias table) are matched to the nearest handler via sentence embeddings. **Three confidence tiers:**
-
-| Tier | Condition | Action |
-|------|-----------|--------|
-| **HIGH** | score ≥ 0.70 AND margin ≥ 0.15 | Full handler — filter output + rewrite args |
-| **MEDIUM** | score ≥ 0.55 AND margin ≥ 0.08 | Filter only — no arg injection (safe) |
-| **None** | below thresholds | Passthrough — don't risk misrouting |
-
-**Margin gate:** If `top_score - second_score < threshold`, routing is ambiguous and CCR falls back rather than guessing. A command scoring 0.71 for cargo and 0.69 for npm would route to nothing (0.02 margin < 0.08).
-
-**Subcommand hint boost (+0.08):** When an unknown command is run with a recognizable subcommand, matching handlers get a boost:
-- `bloop test` → pytest/jest/vitest/go boosted
-- `mytool build` → cargo/go/docker/next boosted
-- `newtool install` → npm/pnpm/brew/pip boosted
-- `x lint` → eslint/golangci-lint/clippy boosted
 
 ---
 
@@ -390,6 +384,14 @@ output_char_cap = 50000          # cap pipeline output (0 = disabled)
 enabled = true
 mode = "aggressive"   # "aggressive" | "always" | "never"
 max_files = 20
+
+[read]
+# Controls how the Read PostToolUse hook filters file content.
+# "passthrough"  — no change (default, backwards-compatible)
+# "auto"         — size-adaptive: >300 lines → aggressive, >100 lines → strip, else passthrough
+# "strip"        — remove comments, normalize blank lines
+# "aggressive"   — keep only function/class signatures + imports
+mode = "auto"
 
 [commands.git]
 patterns = [
@@ -467,11 +469,20 @@ CCR tracks state across turns within a session (identified by `CCR_SESSION_ID=$P
 Dispatches by `tool_name` — Bash, Read, Glob, or Grep:
 
 - **Bash** — min-token gate → result cache → noise pre-filter → global regex rules → EC pressure → IX intent query → BERT pipeline → ZI blocks → delta compression → sentence dedup → session cache → analytics
-- **Read** — files < 50 lines pass through; larger files go through BERT pipeline with intent query; session dedup by file path
+- **Read** — files < 50 lines pass through; if `[read] mode` ≠ `passthrough`, applies `ReadHandlerLevel` early-exit (bypasses BERT); otherwise BERT pipeline with intent query + session dedup by file path
 - **Glob** — results ≤ 20 pass through; larger lists grouped by directory (max 60), session dedup by path-list hash
 - **Grep** — results ≤ 10 lines pass through; larger result sets routed through GrepHandler (compact paths, per-file 25-match cap)
 
 Never fails — returns nothing on error so Claude Code always sees a result.
+
+### Hook Integrity
+
+`ccr init` writes a SHA-256 baseline to `~/.claude/hooks/.ccr-hook.sha256` (chmod 0o444) after installing the rewrite script. At the start of every hook invocation, CCR verifies the script against this baseline. If the file has been modified since installation, CCR prints a security warning to stderr and exits 1 — blocking the hook from running with a tampered script.
+
+```bash
+ccr verify   # check status manually
+ccr init     # reinstall and reset baseline after intentional changes
+```
 
 ---
 

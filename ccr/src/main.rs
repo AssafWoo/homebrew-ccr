@@ -4,6 +4,7 @@ mod cmd;
 mod config_loader;
 mod handlers;
 mod hook;
+mod integrity;
 mod intent;
 mod noise_learner;
 mod pre_cache;
@@ -83,6 +84,16 @@ enum Commands {
         #[arg(long)]
         reset: bool,
     },
+    /// Apply read filtering to a file (diagnostic — shows token savings)
+    ReadFile {
+        /// File path, or - for stdin
+        file: String,
+        /// Filter level: passthrough, auto, strip, aggressive
+        #[arg(long, default_value = "auto")]
+        level: String,
+    },
+    /// Check integrity of installed CCR hook scripts
+    Verify,
     /// Update CCR (use `brew upgrade assafwoo/ccr/ccr` instead)
     Update,
     /// Compress a conversation JSON to reduce token count
@@ -137,6 +148,8 @@ fn main() {
         Commands::Discover => cmd::discover::run(),
         Commands::Expand { id, list } => cmd::expand::run(id.as_deref().unwrap_or(""), list),
         Commands::Noise { reset } => cmd::noise::run(reset),
+        Commands::ReadFile { file, level } => cmd::read_cmd::run(&file, &level),
+        Commands::Verify => cmd::verify::run(),
         Commands::Update => {
             // Detect the bad-keg migration case: older installs stored the keg
             // as version "64" (inferred from "arm64" in the asset URL). brew upgrade
@@ -221,6 +234,11 @@ jq -n --argjson updated "$UPDATED_INPUT" \
         std::fs::set_permissions(&rewrite_script_path, perms)?;
     }
 
+    // Write integrity baseline (SHA-256 of the hook script)
+    if let Err(e) = crate::integrity::write_baseline(&rewrite_script_path, &hooks_dir) {
+        eprintln!("warning: could not write integrity baseline: {e}");
+    }
+
     // Load or create settings.json
     let mut settings: Value = if settings_path.exists() {
         let content = std::fs::read_to_string(&settings_path)?;
@@ -266,12 +284,30 @@ fn uninstall_ccr() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("Cannot find home directory"))?;
 
     let settings_path = home.join(".claude").join("settings.json");
-    let rewrite_script_path = home.join(".claude").join("hooks").join("ccr-rewrite.sh");
+    let hooks_dir = home.join(".claude").join("hooks");
+    let rewrite_script_path = hooks_dir.join("ccr-rewrite.sh");
+    let hash_file_path = hooks_dir.join(".ccr-hook.sha256");
 
     // Remove hook script
     if rewrite_script_path.exists() {
         std::fs::remove_file(&rewrite_script_path)?;
         println!("Removed {}", rewrite_script_path.display());
+    }
+
+    // Remove integrity hash file
+    if hash_file_path.exists() {
+        // Make writable first in case write_baseline set it to 0o444
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Ok(meta) = std::fs::metadata(&hash_file_path) {
+                let mut perms = meta.permissions();
+                perms.set_mode(0o644);
+                let _ = std::fs::set_permissions(&hash_file_path, perms);
+            }
+        }
+        std::fs::remove_file(&hash_file_path)?;
+        println!("Removed {}", hash_file_path.display());
     }
 
     // Strip CCR entries from settings.json

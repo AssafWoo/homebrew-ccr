@@ -8,14 +8,33 @@ pub struct DockerHandler;
 
 impl Handler for DockerHandler {
     fn rewrite_args(&self, args: &[String]) -> Vec<String> {
-        // For `docker logs`, add --tail 200 if not already specified
         let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
-        if subcmd == "logs" && !args.iter().any(|a| a == "--tail") {
-            let mut out = args.to_vec();
-            // Insert --tail 200 after "logs"
-            out.insert(2, "200".to_string());
-            out.insert(2, "--tail".to_string());
-            return out;
+        match subcmd {
+            "logs" => {
+                if !args.iter().any(|a| a == "--tail") {
+                    let mut out = args.to_vec();
+                    out.insert(2, "200".to_string());
+                    out.insert(2, "--tail".to_string());
+                    return out;
+                }
+            }
+            "ps" => {
+                if !args.iter().any(|a| a == "--format") {
+                    let mut out = args.to_vec();
+                    out.push("--format".to_string());
+                    out.push("table {{.ID}}\t{{.Image}}\t{{.Status}}\t{{.Names}}".to_string());
+                    return out;
+                }
+            }
+            "images" => {
+                if !args.iter().any(|a| a == "--format") {
+                    let mut out = args.to_vec();
+                    out.push("--format".to_string());
+                    out.push("table {{.Repository}}\t{{.Tag}}\t{{.Size}}".to_string());
+                    return out;
+                }
+            }
+            _ => {}
         }
         args.to_vec()
     }
@@ -235,8 +254,30 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_args_leaves_other_subcommands_unchanged() {
-        let input = args(&["docker", "ps", "-a"]);
+    fn rewrite_args_injects_format_for_ps() {
+        let result = handler().rewrite_args(&args(&["docker", "ps", "-a"]));
+        assert!(result.contains(&"--format".to_string()), "should inject --format for docker ps");
+        let fmt_idx = result.iter().position(|a| a == "--format").unwrap();
+        assert!(result[fmt_idx + 1].contains("{{.ID}}"), "format should include ID");
+    }
+
+    #[test]
+    fn rewrite_args_injects_format_for_images() {
+        let result = handler().rewrite_args(&args(&["docker", "images"]));
+        assert!(result.contains(&"--format".to_string()), "should inject --format for docker images");
+    }
+
+    #[test]
+    fn rewrite_args_does_not_duplicate_format_for_ps() {
+        let input = args(&["docker", "ps", "--format", "{{.Names}}"]);
+        let result = handler().rewrite_args(&input);
+        let count = result.iter().filter(|a| a.as_str() == "--format").count();
+        assert_eq!(count, 1, "should not add a second --format");
+    }
+
+    #[test]
+    fn rewrite_args_leaves_unknown_subcommands_unchanged() {
+        let input = args(&["docker", "pull", "nginx"]);
         let result = handler().rewrite_args(&input);
         assert_eq!(result, input);
     }

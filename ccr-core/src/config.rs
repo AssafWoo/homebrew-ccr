@@ -9,6 +9,8 @@ pub struct CcrConfig {
     pub commands: HashMap<String, CommandConfig>,
     #[serde(default)]
     pub tee: TeeConfig,
+    #[serde(default)]
+    pub read: ReadConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -34,6 +36,22 @@ impl Default for TeeConfig {
             max_files: 20,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadMode {
+    #[default]
+    Passthrough, // current behaviour — zero regression
+    Auto,        // use auto_level() (>300→Aggressive, >100→Strip, else Passthrough)
+    Strip,
+    Aggressive,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ReadConfig {
+    #[serde(default)]
+    pub mode: ReadMode,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

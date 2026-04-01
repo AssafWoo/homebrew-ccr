@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read};
+use dirs;
 
 #[derive(Debug, Deserialize)]
 struct HookInput {
@@ -47,6 +48,13 @@ pub fn process(input: &str) -> Result<Option<String>> {
 }
 
 pub fn run() -> Result<()> {
+    // Integrity check: warn and exit if hook script has been tampered with
+    if let Some(home) = dirs::home_dir() {
+        let script  = home.join(".claude").join("hooks").join("ccr-rewrite.sh");
+        let hashdir = home.join(".claude").join("hooks");
+        crate::integrity::runtime_check(&script, &hashdir);
+    }
+
     let mut raw = String::new();
     if io::stdin().read_to_string(&mut raw).is_err() {
         return Ok(());
@@ -352,6 +360,22 @@ fn process_read(hook_input: HookInput) -> Result<Option<String>> {
         Ok(c) => c,
         Err(_) => return Ok(None),
     };
+
+    // Aggressive read mode early-exit — bypasses BERT pipeline entirely
+    {
+        use ccr_core::config::ReadMode;
+        if config.read.mode != ReadMode::Passthrough {
+            use crate::handlers::{Handler, read::ReadHandlerLevel};
+            let handler = ReadHandlerLevel::from_read_mode(&config.read.mode);
+            let filtered = handler.filter(&output_text, &[file_path.clone()]);
+            let in_tok  = ccr_core::tokens::count_tokens(&output_text);
+            let out_tok = ccr_core::tokens::count_tokens(&filtered);
+            crate::util::append_analytics(&ccr_core::analytics::Analytics::new(
+                in_tok, out_tok, Some("(read-level)".to_string()), None, None,
+            ));
+            return Ok(Some(serde_json::to_string(&HookOutput { output: filtered })?));
+        }
+    }
 
     // Use file extension as command hint, intent as query
     let ext_hint = std::path::Path::new(&file_path)

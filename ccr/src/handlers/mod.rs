@@ -42,12 +42,16 @@ pub mod webpack;
 pub mod psql;
 pub mod pytest;
 pub mod python;
+pub mod rake;
 pub mod read;
+pub mod rspec;
+pub mod rubocop;
 pub mod terraform;
 pub mod tree;
 pub mod tsc;
 pub mod util;
 pub mod vitest;
+pub mod wget;
 
 /// A specialized handler for a known command.
 /// Handlers may inject extra flags (`rewrite_args`) and compact the output (`filter`).
@@ -139,6 +143,12 @@ fn get_handler_exact(cmd: &str) -> Option<Box<dyn Handler>> {
         // CSS / universal linters
         "stylelint" => Some(Box::new(stylelint::StylelintHandler)),
         "biome" => Some(Box::new(biome::BiomeHandler)),
+        // Ruby ecosystem
+        "rspec" => Some(Box::new(rspec::RspecHandler)),
+        "rubocop" => Some(Box::new(rubocop::RubocopHandler)),
+        "rake" => Some(Box::new(rake::RakeHandler)),
+        // Network utilities
+        "wget" => Some(Box::new(wget::WgetHandler)),
         _ => None,
     }
 }
@@ -184,6 +194,9 @@ const STATIC_ALIASES: &[(&str, &str)] = &[
     ("@biomejs/biome",  "biome"),
     // Go linter variants
     ("golangci",        "golangci-lint"),
+    // Ruby ecosystem aliases
+    ("bundle", "rake"),   // bundler exec tasks often funnel through rake
+    ("rubocop-rails",   "rubocop"),
     // Kubernetes wrappers
     ("k",           "kubectl"), ("kubectl.exe", "kubectl"),
     ("minikube",    "kubectl"), ("kind",        "kubectl"),

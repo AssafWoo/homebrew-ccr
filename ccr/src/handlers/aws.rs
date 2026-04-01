@@ -13,10 +13,23 @@ const JSON_SUBCMDS: &[&str] = &[
 
 const MAX_RESOURCES: usize = 25;
 
+/// Returns true for actions that produce structured output and accept `--output json`.
+/// Prevents injecting the flag for mutating / transfer operations (create-*, put-*, cp, sync…).
+fn is_structured_action(action: &str) -> bool {
+    action.starts_with("describe-")
+        || action.starts_with("list-")
+        || action.starts_with("get-")
+        || action.starts_with("filter-")
+}
+
 impl Handler for AwsHandler {
     fn rewrite_args(&self, args: &[String]) -> Vec<String> {
         let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
+        let action = args.get(2).map(|s| s.as_str()).unwrap_or("");
+        // Only inject for service subcommands that produce structured JSON,
+        // and only for read-only action prefixes (describe-/list-/get-/filter-).
         let should_inject = JSON_SUBCMDS.contains(&subcmd)
+            && (action.is_empty() || is_structured_action(action))
             && !args.iter().any(|a| a == "--output");
         if should_inject {
             let mut out = args.to_vec();
@@ -79,8 +92,16 @@ fn extract_aws_resources(subcmd: &str, action: &str, v: &serde_json::Value) -> O
         ("ecs", "list-services") => extract_ecs_arn_list(v, "serviceArns"),
         ("ecs", "list-tasks") => extract_ecs_arn_list(v, "taskArns"),
         ("s3api", "list-buckets") => extract_s3api_buckets(v),
+        ("sts", "get-caller-identity") => extract_sts_caller_identity(v),
         _ => extract_generic_list(v),
     }
+}
+
+fn extract_sts_caller_identity(v: &serde_json::Value) -> Option<String> {
+    let account = str_field(v, "Account");
+    let arn     = str_field(v, "Arn");
+    let user_id = str_field(v, "UserId");
+    Some(format!("Account={} UserId={} Arn={}", account, user_id, arn))
 }
 
 fn extract_ec2_instances(v: &serde_json::Value) -> Option<String> {
@@ -459,6 +480,36 @@ mod tests {
         let a = args(&["aws", "s3", "cp", "file.txt", "s3://bucket/"]);
         let out = handler.rewrite_args(&a);
         assert!(!out.contains(&"--output".to_string()));
+    }
+
+    #[test]
+    fn rewrite_args_skips_injection_for_mutating_ec2_action() {
+        let handler = AwsHandler;
+        // create-instance is not a read-only action; should not inject --output json
+        let a = args(&["aws", "ec2", "create-instance"]);
+        let out = handler.rewrite_args(&a);
+        assert!(!out.contains(&"--output".to_string()),
+            "mutating actions should not get --output json");
+    }
+
+    #[test]
+    fn rewrite_args_injects_for_describe_action() {
+        let handler = AwsHandler;
+        let a = args(&["aws", "ec2", "describe-vpcs"]);
+        let out = handler.rewrite_args(&a);
+        assert!(out.contains(&"--output".to_string()));
+    }
+
+    #[test]
+    fn sts_get_caller_identity_formats_one_liner() {
+        let json = serde_json::json!({
+            "Account": "123456789012",
+            "Arn": "arn:aws:iam::123456789012:user/alice",
+            "UserId": "AIDAIOSFODNN7EXAMPLE"
+        });
+        let result = extract_aws_resources("sts", "get-caller-identity", &json).unwrap();
+        assert!(result.contains("123456789012"), "should contain account");
+        assert!(result.contains("alice"), "should contain ARN fragment");
     }
 
     // ── filter_s3_ls (unchanged behaviour) ───────────────────────────────────

@@ -5,6 +5,8 @@ pub mod filter;
 pub mod gain;
 pub mod noise;
 pub mod proxy;
+pub mod read_cmd;
 pub mod rewrite;
 pub mod run;
 pub mod update;
+pub mod verify;

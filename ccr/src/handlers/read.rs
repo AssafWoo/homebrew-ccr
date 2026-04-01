@@ -4,6 +4,7 @@ use super::Handler;
 pub enum ReadLevel {
     #[default]
     Passthrough, // no filtering — current behaviour
+    Auto,        // use auto_level() to pick level based on file size + extension
     Strip,       // strip comments + normalize blank lines
     Aggressive,  // imports + signatures + type defs only
 }
@@ -400,6 +401,20 @@ impl Handler for ReadHandler {
     }
 }
 
+impl ReadHandlerLevel {
+    /// Construct from a `ReadMode` config value.
+    pub fn from_read_mode(mode: &ccr_core::config::ReadMode) -> Self {
+        use ccr_core::config::ReadMode;
+        let level = match mode {
+            ReadMode::Passthrough => ReadLevel::Passthrough,
+            ReadMode::Auto        => ReadLevel::Auto,
+            ReadMode::Strip       => ReadLevel::Strip,
+            ReadMode::Aggressive  => ReadLevel::Aggressive,
+        };
+        Self { level }
+    }
+}
+
 /// Richer handler with configurable `ReadLevel`.
 impl Handler for ReadHandlerLevel {
     fn filter(&self, output: &str, args: &[String]) -> String {
@@ -409,6 +424,13 @@ impl Handler for ReadHandlerLevel {
 
         match &self.level {
             ReadLevel::Passthrough => filter_passthrough(output),
+            ReadLevel::Auto => {
+                let line_count = output.lines().count();
+                let ext = extract_ext_from_args(args);
+                let effective = auto_level(line_count, &ext);
+                // effective is never Auto — no infinite recursion
+                ReadHandlerLevel { level: effective }.filter(output, args)
+            }
             ReadLevel::Strip => {
                 let stripped = apply_strip(&lines, &lang);
                 if stripped.len() > 500 {
@@ -573,6 +595,83 @@ mod tests {
         assert_eq!(auto_level(1000, "json"), ReadLevel::Passthrough);
         assert_eq!(auto_level(1000, "yaml"), ReadLevel::Passthrough);
         assert_eq!(auto_level(1000, "toml"), ReadLevel::Passthrough);
+    }
+
+    // ── ReadLevel::Auto tests (new) ───────────────────────────────────────────
+
+    /// Build N multi-line functions so Aggressive has body lines to drop.
+    fn make_multiline_fns(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("pub fn foo{}() {{\n    let x{} = {};\n    x{}\n}}", i, i, i, i))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn test_auto_is_aggressive_for_large_rs() {
+        use super::super::Handler;
+        let handler = ReadHandlerLevel { level: ReadLevel::Auto };
+        // 90 multi-line functions = >300 lines (triggers Aggressive)
+        let input = make_multiline_fns(90);
+        let line_count = input.lines().count();
+        assert!(line_count > 300, "sanity: input has {} lines", line_count);
+        let args = vec!["file.rs".to_string()];
+        let result = handler.filter(&input, &args);
+        // Aggressive keeps fn signatures but drops bodies
+        assert!(result.contains("pub fn foo0()"), "should keep fn signature");
+        assert!(!result.contains("let x0 ="), "should drop body lines");
+        assert!(result.len() < input.len(), "aggressive should compress");
+    }
+
+    #[test]
+    fn test_auto_is_strip_for_medium_ts() {
+        use super::super::Handler;
+        let handler = ReadHandlerLevel { level: ReadLevel::Auto };
+        // 120 lines of TS with comments (101-300 → Strip)
+        let lines: Vec<String> = (0..120)
+            .map(|i| format!("const x{} = {}; // comment {}", i, i, i))
+            .collect();
+        let input = lines.join("\n");
+        let args  = vec!["app.ts".to_string()];
+        let result = handler.filter(&input, &args);
+        assert!(!result.contains("// comment"), "strip should remove comments");
+    }
+
+    #[test]
+    fn test_auto_passthrough_for_small() {
+        use super::super::Handler;
+        let handler = ReadHandlerLevel { level: ReadLevel::Auto };
+        // 40 single-line functions — below the 100-line Strip threshold
+        let input: String = (0..40)
+            .map(|i| format!("fn foo{}() {{}}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let args = vec!["small.rs".to_string()];
+        let result = handler.filter(&input, &args);
+        assert_eq!(result, input, "small file should be unchanged");
+    }
+
+    #[test]
+    fn test_auto_dataformat_always_passthrough() {
+        use super::super::Handler;
+        let handler = ReadHandlerLevel { level: ReadLevel::Auto };
+        // Keep under 100 lines so filter_passthrough also returns unchanged
+        let input: String = (0..50)
+            .map(|i| format!("  \"key{}\": \"value{}\"", i, i))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        let args = vec!["data.json".to_string()];
+        let result = handler.filter(&input, &args);
+        assert_eq!(result, input, "data formats should always passthrough");
+    }
+
+    #[test]
+    fn test_from_read_mode_mapping() {
+        use ccr_core::config::ReadMode;
+        assert_eq!(ReadHandlerLevel::from_read_mode(&ReadMode::Passthrough).level, ReadLevel::Passthrough);
+        assert_eq!(ReadHandlerLevel::from_read_mode(&ReadMode::Auto).level,        ReadLevel::Auto);
+        assert_eq!(ReadHandlerLevel::from_read_mode(&ReadMode::Strip).level,       ReadLevel::Strip);
+        assert_eq!(ReadHandlerLevel::from_read_mode(&ReadMode::Aggressive).level,  ReadLevel::Aggressive);
     }
 
     #[test]

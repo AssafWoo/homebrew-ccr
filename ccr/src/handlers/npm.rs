@@ -1,10 +1,33 @@
 use super::Handler;
 
+/// Known npm built-in subcommands (not user scripts).
+/// If the first argument is NOT in this list it is treated as a script name
+/// and `run` is automatically injected before it.
+const NPM_BUILTINS: &[&str] = &[
+    "access", "adduser", "audit", "bin", "bugs", "cache", "ci", "completion",
+    "config", "dedupe", "deprecate", "diff", "dist-tag", "docs", "doctor",
+    "edit", "exec", "explain", "explore", "find-dupes", "fund", "get", "help",
+    "help-search", "hook", "i", "init", "install", "install-ci-test",
+    "install-test", "it", "link", "ll", "login", "logout", "ls", "ls",
+    "org", "outdated", "owner", "pack", "ping", "pkg", "prefix", "profile",
+    "prune", "publish", "query", "rebuild", "repo", "restart", "root",
+    "run", "run-script", "search", "set", "set-script", "shrinkwrap", "star",
+    "stars", "start", "stop", "t", "team", "test", "token", "tst", "un",
+    "uninstall", "unlink", "unpublish", "unstar", "up", "update", "v",
+    "version", "view", "whoami", "add", "remove", "rm", "r",
+];
+
 pub struct NpmHandler;
 
 impl Handler for NpmHandler {
     fn rewrite_args(&self, args: &[String]) -> Vec<String> {
         let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
+        // Auto-inject `run` for user scripts (first arg not a known builtin)
+        if !subcmd.is_empty() && !NPM_BUILTINS.contains(&subcmd) {
+            let mut out = args.to_vec();
+            out.insert(1, "run".to_string());
+            return out;
+        }
         match subcmd {
             "install" | "i" | "add" | "ci" => {
                 if args.iter().any(|a| a == "--no-progress") {
@@ -24,8 +47,7 @@ impl Handler for NpmHandler {
         match subcmd {
             "install" | "i" | "add" | "ci" => filter_install(output),
             "test" | "t" => filter_test(output),
-            "run" => {
-                // For npm run <script>, filter based on output content
+            "run" | "run-script" => {
                 filter_run_script(output)
             }
             _ => output.to_string(),
@@ -220,6 +242,24 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn rewrite_args_injects_run_for_unknown_subcommand() {
+        let handler = NpmHandler;
+        // "build" is not a builtin — should become "npm run build"
+        let result = handler.rewrite_args(&args(&["npm", "build"]));
+        assert_eq!(result[1], "run", "should inject 'run'");
+        assert_eq!(result[2], "build", "script name should remain");
+    }
+
+    #[test]
+    fn rewrite_args_does_not_inject_run_for_builtins() {
+        let handler = NpmHandler;
+        let result = handler.rewrite_args(&args(&["npm", "install", "lodash"]));
+        assert_eq!(result[1], "install", "'install' is a builtin — no run injection");
+        let result2 = handler.rewrite_args(&args(&["npm", "test"]));
+        assert_eq!(result2[1], "test", "'test' is a builtin — no run injection");
     }
 
     #[test]

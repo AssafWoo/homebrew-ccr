@@ -4,6 +4,17 @@ use super::Handler;
 pub struct GoHandler;
 
 impl Handler for GoHandler {
+    fn rewrite_args(&self, args: &[String]) -> Vec<String> {
+        let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
+        if subcmd == "test" && !args.iter().any(|a| a == "-json") {
+            let mut out = args.to_vec();
+            // Insert -json after "test"
+            out.insert(2, "-json".to_string());
+            return out;
+        }
+        args.to_vec()
+    }
+
     fn filter(&self, output: &str, args: &[String]) -> String {
         let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
         match subcmd {
@@ -45,7 +56,108 @@ fn filter_build(output: &str) -> String {
     errors.join("\n")
 }
 
+/// Parse `go test -json` structured output.
+/// Each line is a JSON event object.  We collect output for failing tests,
+/// suppress passing test detail, and emit a concise summary.
+fn filter_test_json(output: &str) -> String {
+    use std::collections::HashMap;
+
+    let mut test_output: HashMap<String, Vec<String>> = HashMap::new();
+    let mut failures: Vec<String> = Vec::new();
+    let mut pass_count = 0usize;
+    let mut fail_count = 0usize;
+
+    for line in output.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Lines that are not JSON (e.g. panic output) are kept verbatim
+        if !line.starts_with('{') {
+            failures.push(line.to_string());
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let action = v.get("Action").and_then(|a| a.as_str()).unwrap_or("");
+        let test   = v.get("Test").and_then(|t| t.as_str()).unwrap_or("").to_string();
+        let pkg    = v.get("Package").and_then(|p| p.as_str()).unwrap_or("?");
+
+        match action {
+            "output" => {
+                if let Some(out) = v.get("Output").and_then(|o| o.as_str()) {
+                    test_output.entry(test).or_default().push(out.to_string());
+                }
+            }
+            "pass" if !test.is_empty() => {
+                pass_count += 1;
+                test_output.remove(&test); // discard passing test output
+            }
+            "fail" if !test.is_empty() => {
+                fail_count += 1;
+                failures.push(format!("--- FAIL: {}", test));
+                if let Some(lines) = test_output.remove(&test) {
+                    let mut count = 0usize;
+                    for l in &lines {
+                        let l = l.trim_end_matches('\n');
+                        let t = l.trim();
+                        // Skip RUN/FAIL/PASS markers already captured elsewhere
+                        if t.is_empty()
+                            || t.starts_with("=== RUN")
+                            || t.starts_with("--- FAIL")
+                            || t.starts_with("--- PASS")
+                        {
+                            continue;
+                        }
+                        failures.push(format!("    {}", l));
+                        count += 1;
+                        if count >= 10 {
+                            failures.push("    [... truncated ...]".to_string());
+                            break;
+                        }
+                    }
+                }
+            }
+            "fail" if test.is_empty() => {
+                // Package-level failure summary
+                let elapsed = v.get("Elapsed").and_then(|e| e.as_f64()).unwrap_or(0.0);
+                failures.push(format!("FAIL\t{}\t{:.3}s", pkg, elapsed));
+            }
+            "pass" if test.is_empty() => {
+                // Package-level pass summary
+                let elapsed = v.get("Elapsed").and_then(|e| e.as_f64()).unwrap_or(0.0);
+                failures.push(format!("ok  \t{}\t{:.3}s", pkg, elapsed));
+            }
+            _ => {}
+        }
+    }
+
+    if fail_count == 0 && failures.iter().all(|l| l.starts_with("ok  \t")) {
+        if pass_count > 0 {
+            failures.push(format!("[{} tests passed]", pass_count));
+        } else {
+            return "[all tests passed]".to_string();
+        }
+        return failures.join("\n");
+    }
+
+    if pass_count > 0 {
+        failures.push(format!("[{} tests passed]", pass_count));
+    }
+
+    if failures.is_empty() {
+        "[all tests passed]".to_string()
+    } else {
+        failures.join("\n")
+    }
+}
+
 fn filter_test(output: &str) -> String {
+    // Detect `-json` mode: first non-empty line starts with '{'
+    if output.lines().find(|l| !l.trim().is_empty()).map(|l| l.trim_start().starts_with('{')).unwrap_or(false) {
+        return filter_test_json(output);
+    }
     let lines: Vec<&str> = output.lines().collect();
     let mut out: Vec<String> = Vec::new();
     let mut in_failure = false;
