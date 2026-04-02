@@ -394,10 +394,53 @@ run_check "ccr rewrite 'echo hello' exits (no rewrite for unknown commands)" \
   "ccr rewrite 'echo hello' > /dev/null 2>&1 || true"
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "10. ccr gain — analytics display"
+hdr "10. End-to-end hook → analytics pipeline (fresh-install simulation)"
+# ─────────────────────────────────────────────────────────────────────────────
+# Simulates exactly what a new user does: install, init, use Claude Code,
+# check gain. This is the path that showed "0 runs" for a real user.
+
+# Start from a clean DB so the count is deterministic
+FRESH_DB="$DATA_DIR/analytics_e2e_test.db"
+rm -f "$FRESH_DB"
+
+# Step 1: simulate Claude Code PreToolUse hook firing for 'git status'
+HOOK_SCRIPT="$HOME/.claude/hooks/ccr-rewrite.sh"
+HOOK_INPUT='{"tool_name":"Bash","tool_input":{"command":"git status"}}'
+REWRITE_OUT=$(echo "$HOOK_INPUT" | bash "$HOOK_SCRIPT" 2>/dev/null)
+REWRITTEN_CMD=$(echo "$REWRITE_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('hookSpecificOutput',{}).get('updatedInput',{}).get('command',''))" 2>/dev/null)
+
+if [[ "$REWRITTEN_CMD" == *"ccr"* ]]; then
+  ok "hook script rewrites git status to ccr-prefixed command"
+else
+  fail "hook script did not rewrite git status (got: '$REWRITTEN_CMD')"
+fi
+
+# Step 2: run the rewritten command (as Claude Code would)
+DB_BEFORE=$(sqlite3 "$DATA_DIR/analytics.db" "SELECT COUNT(*) FROM records;" 2>/dev/null || echo 0)
+eval "$REWRITTEN_CMD" > /dev/null 2>&1 || true
+DB_AFTER=$(sqlite3 "$DATA_DIR/analytics.db" "SELECT COUNT(*) FROM records;" 2>/dev/null || echo 0)
+
+if [[ "$DB_AFTER" -gt "$DB_BEFORE" ]]; then
+  ok "running rewritten command writes a new analytics record (${DB_BEFORE} → ${DB_AFTER})"
+else
+  fail "running rewritten command did NOT write analytics (count stayed at ${DB_BEFORE})"
+fi
+
+# Step 3: ccr gain must show those records (the "0 runs" regression check)
+run_check "ccr gain shows non-zero Runs after hook fired" \
+  "ccr gain | python3 -c \"
+import sys
+out = sys.stdin.read()
+assert 'Runs:' in out, 'Runs: missing'
+import re
+m = re.search(r'Runs:\s+(\d+)', out)
+assert m and int(m.group(1)) > 0, f'Expected >0 runs, got: {out[:200]}'
+\""
+
+# ─────────────────────────────────────────────────────────────────────────────
+hdr "11. ccr gain — analytics display"
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Run a few more commands to ensure analytics exist
 ccr run git log --oneline > /dev/null 2>&1 || true
 ccr run git status > /dev/null 2>&1 || true
 
@@ -407,7 +450,7 @@ run_check "ccr gain shows Tokens saved:" "ccr gain" "Tokens saved:"
 run_check "ccr gain --breakdown exits 0" "ccr gain --breakdown"
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "10. Analytics migration — JSONL → SQLite"
+hdr "12. Analytics migration — JSONL → SQLite"
 # ─────────────────────────────────────────────────────────────────────────────
 # Simulate a user who has v0.5.x JSONL analytics and upgrades to v0.6.0.
 
@@ -458,7 +501,7 @@ fi
 rm -rf "$MIGRATE_XDG"
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "11. SQLite analytics correctness"
+hdr "13. SQLite analytics correctness"
 # ─────────────────────────────────────────────────────────────────────────────
 
 CURRENT_DB="$DATA_DIR/analytics.db"
@@ -494,7 +537,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "12. ccr expand — zoom-in block retrieval"
+hdr "14. ccr expand — zoom-in block retrieval"
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Generate output with a collapsed block (zoom must be enabled)
@@ -508,7 +551,7 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "13. Uninstall — Claude Code"
+hdr "15. Uninstall — Claude Code"
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_check "ccr init --uninstall exits 0" \
@@ -521,7 +564,7 @@ run_check "re-running ccr init after uninstall works" \
   "ccr init && test -f $HOME/.claude/hooks/ccr-rewrite.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
-hdr "14. Edge cases"
+hdr "16. Edge cases"
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_check "ccr run with no args exits cleanly (shows help)" \
