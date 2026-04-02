@@ -59,7 +59,7 @@ hdr "1. Binary sanity"
 # ─────────────────────────────────────────────────────────────────────────────
 
 run_check "ccr --version prints version number" \
-  "ccr --version" "0.6.0"
+  "ccr --version | grep -qE '^ccr [0-9]+\.[0-9]+\.[0-9]+$' && ccr --version"
 
 run_check "ccr --help exits 0" \
   "ccr --help"
