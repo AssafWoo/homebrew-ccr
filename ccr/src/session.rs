@@ -102,6 +102,18 @@ impl SessionState {
     /// Check if a recent run of the same command produced semantically identical output.
     /// Returns `Some(hit)` when cosine similarity exceeds the threshold.
     pub fn find_similar(&self, cmd: &str, embedding: &[f32]) -> Option<SessionHit> {
+        self.find_similar_with_threshold(cmd, embedding, SIMILARITY_THRESHOLD)
+    }
+
+    /// Like `find_similar` but with a caller-supplied cosine similarity
+    /// threshold (0.0–1.0). Used by Read dedup to scale the threshold by file size.
+    pub fn find_similar_with_threshold(
+        &self,
+        cmd: &str,
+        embedding: &[f32],
+        threshold: f32,
+    ) -> Option<SessionHit> {
+        debug_assert!((0.0..=1.0).contains(&threshold), "threshold must be in [0.0, 1.0], got {}", threshold);
         let now = now_secs();
         self.entries
             .iter()
@@ -109,7 +121,7 @@ impl SessionState {
             .rev()
             .find_map(|e| {
                 let sim = cosine_sim(embedding, &e.embedding);
-                if sim >= SIMILARITY_THRESHOLD {
+                if sim >= threshold {
                     Some(SessionHit {
                         turn: e.turn,
                         age_secs: now.saturating_sub(e.ts),
@@ -390,5 +402,51 @@ pub fn format_age(secs: u64) -> String {
         format!("{}m", secs / 60)
     } else {
         format!("{}h", secs / 3600)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session_with_entry(cmd: &str, embedding: Vec<f32>) -> SessionState {
+        let mut s = SessionState::default();
+        s.record(cmd, embedding, 100, "test content", false);
+        s
+    }
+
+    #[test]
+    fn find_similar_with_threshold_respects_threshold() {
+        // Two nearly identical embeddings (cosine ~0.995)
+        let emb_a = vec![1.0, 0.0, 0.0];
+        let emb_b = vec![0.99, 0.1, 0.0];
+        let session = make_session_with_entry("test", emb_a);
+
+        // Low threshold: should match
+        assert!(session.find_similar_with_threshold("test", &emb_b, 0.90).is_some());
+        // Very high threshold: should not match
+        assert!(session.find_similar_with_threshold("test", &emb_b, 0.999).is_none());
+    }
+
+    #[test]
+    fn find_similar_with_threshold_different_cmd_no_match() {
+        let emb = vec![1.0, 0.0, 0.0];
+        let session = make_session_with_entry("git status", emb.clone());
+        assert!(session.find_similar_with_threshold("git log", &emb, 0.5).is_none());
+    }
+
+    #[test]
+    fn find_similar_delegates_to_threshold_variant() {
+        let emb = vec![1.0, 0.0, 0.0];
+        let session = make_session_with_entry("cmd", emb.clone());
+        // find_similar uses SIMILARITY_THRESHOLD (0.92); identical embedding should match
+        assert!(session.find_similar("cmd", &emb).is_some());
+    }
+
+    #[test]
+    fn find_similar_empty_session_returns_none() {
+        let session = SessionState::default();
+        let emb = vec![1.0, 0.0, 0.0];
+        assert!(session.find_similar_with_threshold("cmd", &emb, 0.5).is_none());
     }
 }

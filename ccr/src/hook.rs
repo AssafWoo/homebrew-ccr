@@ -419,13 +419,16 @@ fn process_read(hook_input: HookInput) -> Result<Option<String>> {
 
     let _ = crate::zoom_store::save_blocks(&sid, result.zoom_blocks);
 
-    // Session dedup using file_path as cmd_key
+    // Session dedup using file_path as cmd_key.
+    // Threshold scales by file size — see `read_dedup_threshold()`.
     let compressed = if let Ok(mut embs) =
         ccr_core::summarizer::embed_batch(&[result.output.as_str()])
     {
         if let Some(emb) = embs.pop() {
             let tokens = ccr_core::tokens::count_tokens(&result.output);
-            if let Some(hit) = session.find_similar(&file_path, &emb) {
+            let line_count = result.output.lines().count();
+            let threshold = read_dedup_threshold(line_count);
+            if let Some(hit) = session.find_similar_with_threshold(&file_path, &emb, threshold) {
                 let age = crate::session::format_age(hit.age_secs);
                 format!(
                     "[same file content as turn {} ({} ago) — {} tokens saved]",
@@ -648,9 +651,61 @@ fn apply_sentence_dedup(
         .unwrap_or_else(|| output.to_string())
 }
 
+/// Cosine similarity threshold for Read dedup, scaled by file size.
+/// Large files need higher similarity to trigger dedup because a small
+/// edit barely moves the overall BERT embedding.
+///
+/// Approximate calibration against all-MiniLM-L6-v2 on synthetic Rust
+/// files (see ccr-core/tests/cosine_sensitivity.rs). Re-validate if the
+/// embedding model changes:
+///   θ=0.92 → ~25% of lines must change to drop below
+///   θ=0.95 → ~8% of lines must change
+///   θ=0.96 → ~4% of lines must change
+fn read_dedup_threshold(line_count: usize) -> f32 {
+    if line_count > 200 {
+        0.96
+    } else if line_count > 50 {
+        0.95
+    } else {
+        0.92
+    }
+}
+
 fn now_secs() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_dedup_threshold_scales_with_size() {
+        // Small files: most lenient
+        assert_eq!(read_dedup_threshold(10), 0.92);
+        assert_eq!(read_dedup_threshold(50), 0.92);
+        // Medium files: stricter
+        assert_eq!(read_dedup_threshold(51), 0.95);
+        assert_eq!(read_dedup_threshold(200), 0.95);
+        // Large files: strictest
+        assert_eq!(read_dedup_threshold(201), 0.96);
+        assert_eq!(read_dedup_threshold(5000), 0.96);
+    }
+
+    #[test]
+    fn read_dedup_threshold_zero_lines() {
+        assert_eq!(read_dedup_threshold(0), 0.92);
+    }
+
+    #[test]
+    fn read_dedup_threshold_monotonically_increases() {
+        let small = read_dedup_threshold(30);
+        let medium = read_dedup_threshold(100);
+        let large = read_dedup_threshold(500);
+        assert!(small <= medium);
+        assert!(medium <= large);
+    }
 }

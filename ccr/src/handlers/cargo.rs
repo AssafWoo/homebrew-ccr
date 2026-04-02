@@ -14,13 +14,26 @@ impl Handler for CargoHandler {
         let subcmd = args.get(1).map(|s| s.as_str()).unwrap_or("");
         match subcmd {
             "build" | "check" | "clippy" => {
-                // Inject --message-format json unless already present
+                // Inject --message-format json unless already present.
+                // Insert before any `--` separator so the flag is parsed by cargo,
+                // not passed through to the underlying tool (e.g. clippy lints).
                 if args.iter().any(|a| a.starts_with("--message-format")) {
                     args.to_vec()
                 } else {
-                    let mut out = args.to_vec();
-                    out.push("--message-format".to_string());
-                    out.push("json".to_string());
+                    let mut out = Vec::with_capacity(args.len() + 2);
+                    let mut inserted = false;
+                    for a in args {
+                        if a == "--" && !inserted {
+                            out.push("--message-format".to_string());
+                            out.push("json".to_string());
+                            inserted = true;
+                        }
+                        out.push(a.clone());
+                    }
+                    if !inserted {
+                        out.push("--message-format".to_string());
+                        out.push("json".to_string());
+                    }
                     out
                 }
             }
@@ -279,6 +292,62 @@ mod tests {
         let output = result.join("\n");
         assert!(output.contains("dead_code") && output.contains("×3"));
         assert!(output.contains("unused_variables") && output.contains("×2"));
+    }
+
+    // ── rewrite_args ─────────────────────────────────────────────────────
+
+    #[test]
+    fn message_format_injected_before_separator() {
+        let handler = CargoHandler;
+        let args: Vec<String> = vec!["cargo", "clippy", "--", "-D", "warnings"]
+            .into_iter().map(String::from).collect();
+        let result = handler.rewrite_args(&args);
+        let sep_pos = result.iter().position(|a| a == "--").unwrap();
+        let fmt_pos = result.iter().position(|a| a == "--message-format").unwrap();
+        assert!(fmt_pos < sep_pos, "--message-format must come before --");
+    }
+
+    #[test]
+    fn message_format_appended_when_no_separator() {
+        let handler = CargoHandler;
+        let args: Vec<String> = vec!["cargo", "build"]
+            .into_iter().map(String::from).collect();
+        let result = handler.rewrite_args(&args);
+        assert!(result.contains(&"--message-format".to_string()));
+        assert!(result.contains(&"json".to_string()));
+    }
+
+    #[test]
+    fn message_format_not_doubled() {
+        let handler = CargoHandler;
+        let args: Vec<String> = vec!["cargo", "check", "--message-format", "json"]
+            .into_iter().map(String::from).collect();
+        let result = handler.rewrite_args(&args);
+        let count = result.iter().filter(|a| a.as_str() == "--message-format").count();
+        assert_eq!(count, 1, "should not inject a second --message-format");
+    }
+
+    #[test]
+    fn message_format_only_before_first_separator() {
+        let handler = CargoHandler;
+        let args: Vec<String> = vec!["cargo", "clippy", "--", "-D", "warnings", "--", "extra"]
+            .into_iter().map(String::from).collect();
+        let result = handler.rewrite_args(&args);
+        let fmt_count = result.iter().filter(|a| a.as_str() == "--message-format").count();
+        assert_eq!(fmt_count, 1, "should only inject once even with multiple --");
+        let sep_pos = result.iter().position(|a| a == "--").unwrap();
+        let fmt_pos = result.iter().position(|a| a == "--message-format").unwrap();
+        assert!(fmt_pos < sep_pos);
+    }
+
+    #[test]
+    fn non_build_subcommand_not_injected() {
+        let handler = CargoHandler;
+        let args: Vec<String> = vec!["cargo", "test", "--", "--nocapture"]
+            .into_iter().map(String::from).collect();
+        let result = handler.rewrite_args(&args);
+        assert!(!result.contains(&"--message-format".to_string()),
+            "cargo test should not get --message-format injected");
     }
 
     #[test]
