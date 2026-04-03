@@ -651,13 +651,12 @@ fn apply_sentence_dedup(
         .unwrap_or_else(|| output.to_string())
 }
 
-/// Cosine similarity threshold for Read dedup, scaled by file size.
-/// Large files need higher similarity to trigger dedup because a small
+/// Cosine similarity threshold for Read dedup, scaled by filtered output length.
+/// Longer outputs need higher similarity to trigger dedup because a small
 /// edit barely moves the overall BERT embedding.
 ///
-/// Approximate calibration against all-MiniLM-L6-v2 on synthetic Rust
-/// files (see ccr-core/tests/cosine_sensitivity.rs). Re-validate if the
-/// embedding model changes:
+/// Calibrated against all-MiniLM-L6-v2 on synthetic Rust files.
+/// Re-validate if the embedding model changes:
 ///   θ=0.92 → ~25% of lines must change to drop below
 ///   θ=0.95 → ~8% of lines must change
 ///   θ=0.96 → ~4% of lines must change

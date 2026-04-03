@@ -266,6 +266,18 @@ mod tests {
     }
 
     #[test]
+    fn compound_with_pipe_only_wraps_non_piped_part() {
+        // rewrite_compound splits on && then has_stdout_diversion guards each part.
+        // The piped part must NOT be wrapped; the non-piped part should be.
+        let result = rewrite_command("cargo build && git log | head -5");
+        assert!(result.is_some(), "compound should still rewrite the non-piped part");
+        let r = result.unwrap();
+        assert!(r.contains("ccr run cargo build"), "cargo build should be wrapped");
+        assert!(!r.contains("ccr run git log"), "piped git log must not be wrapped");
+        assert!(r.contains("git log | head -5"), "piped part should pass through unchanged");
+    }
+
+    #[test]
     fn git_show_redirect_not_wrapped() {
         // git show with redirect must not be wrapped — would corrupt the output file
         let result = rewrite_command("git show origin/main:src/lib.rs > /tmp/lib.rs");
