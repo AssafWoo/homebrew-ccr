@@ -10,12 +10,12 @@ class Ccr < Formula
   # Each tarball contains the ccr binary + libonnxruntime dylib bundled together.
   on_arm do
     url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.6.5/ccr-macos-arm64.tar.gz"
-    sha256 "d2388c71eddf9571ae6744710efa377dd8b223fe53a1189b740b933e0e506c6f"
+    sha256 "0cf5a148d00ac93bac9024f1dd405396b8f71f492d0366125369326fa7d91481"
   end
 
   on_intel do
     url "https://github.com/AssafWoo/homebrew-ccr/releases/download/v0.6.5/ccr-macos-x86_64.tar.gz"
-    sha256 "b807357ef1d5c66414dcfb86078d28c2eca232d04c69f18424ba10b33e25da3f"
+    sha256 "d7489619e6d40671e84b5ce2190fa1d309f40dac4e9d7a65b3bfeb2bf1f59afd"
   end
 
   def install
