@@ -137,7 +137,8 @@ impl Handler for GrepHandler {
         const PER_FILE_LIMIT: usize = 100;
 
         'outer: for (file, matches) in &by_file {
-            out.push(format!("{}:", compact_path(&file)));
+            out.push(format!("{}: [{} match{}]", compact_path(&file), matches.len(),
+                if matches.len() == 1 { "" } else { "es" }));
             let file_shown = PER_FILE_LIMIT.min(matches.len());
             let file_extra = matches.len().saturating_sub(PER_FILE_LIMIT);
             for m in &matches[..file_shown] {
@@ -313,5 +314,6 @@ mod tests {
         let result = handler.filter(&output, &[]);
         // The file header line should have the compacted path
         assert!(result.contains(".../file.rs:"), "expected compacted path in output, got: {}", result);
+        assert!(result.contains("[1 match]"), "expected per-file count in header, got: {}", result);
     }
 }

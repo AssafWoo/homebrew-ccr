@@ -1,4 +1,4 @@
-command_hint = "git"
+command_hint = "git log"
 
 [[questions]]
 question = "What is the hash of the most recent commit?"

@@ -69,10 +69,12 @@ pub fn run_fixture(txt_path: &Path, qa_path: &Path, api_key: &str) -> Result<Fix
     let input = std::fs::read_to_string(txt_path)?;
     let qa: QaFixture = toml::from_str(&std::fs::read_to_string(qa_path)?)?;
 
-    // Apply command handler filter first (same as the real ccr pipeline does at runtime)
+    // Apply command handler filter first (same as the real ccr pipeline does at runtime).
+    // Split command_hint on whitespace so "git push" → ["git", "push"] enabling subcmd routing.
     let handler_output = if !qa.command_hint.is_empty() {
-        if let Some(h) = ccr::handlers::get_handler(&qa.command_hint) {
-            let fake_args = vec![qa.command_hint.clone()];
+        let binary = qa.command_hint.split_whitespace().next().unwrap_or(&qa.command_hint);
+        if let Some(h) = ccr::handlers::get_handler(binary) {
+            let fake_args: Vec<String> = qa.command_hint.split_whitespace().map(|s| s.to_string()).collect();
             h.filter(&input, &fake_args)
         } else {
             input.clone()

@@ -1,4 +1,4 @@
-command_hint = "git"
+command_hint = "git diff"
 
 [[questions]]
 question = "Which files were changed in this diff?"

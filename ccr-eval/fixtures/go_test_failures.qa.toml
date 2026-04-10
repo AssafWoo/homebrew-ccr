@@ -1,4 +1,4 @@
-command_hint = "go"
+command_hint = "go test"
 
 [[questions]]
 question = "Which test failed in the api package?"
