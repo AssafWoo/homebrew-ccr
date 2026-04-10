@@ -10,12 +10,12 @@ class Pandafilter < Formula
   # Each tarball contains the panda binary + libonnxruntime dylib bundled together.
   on_arm do
     url "https://github.com/AssafWoo/PandaFilter/releases/download/v0.6.12/panda-macos-arm64.tar.gz"
-    sha256 ""
+    sha256 "1a7d8ba409107562441e1affd21d18249da63b8815ca51ada74215b8e9d79ef6"
   end
 
   on_intel do
     url "https://github.com/AssafWoo/PandaFilter/releases/download/v0.6.12/panda-macos-x86_64.tar.gz"
-    sha256 ""
+    sha256 "a6951567ff8bef1d4c384c3dabf9741223f42615784ba30443c7c510385ae365"
   end
 
   def install
