@@ -20,6 +20,18 @@
   </a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/AssafWoo/PandaFilter/actions/workflows/ci.yml"><img src="https://github.com/AssafWoo/PandaFilter/workflows/CI/badge.svg" alt="CI"></a>
+  &nbsp;
+  <a href="https://github.com/AssafWoo/PandaFilter/releases/latest"><img src="https://img.shields.io/github/v/release/AssafWoo/PandaFilter" alt="Latest Release"></a>
+  &nbsp;
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  &nbsp;
+  <a href="https://github.com/AssafWoo/homebrew-pandafilter"><img src="https://img.shields.io/badge/homebrew-pandafilter-orange?logo=homebrew" alt="Homebrew"></a>
+  &nbsp;
+  <a href="https://discord.com/invite/FFQC3bxYQ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+</p>
+
 ---
 
 ## Quick start
