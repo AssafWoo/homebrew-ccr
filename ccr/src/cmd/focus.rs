@@ -352,7 +352,10 @@ fn hook_mode() -> Result<()> {
 
     // Record guidance event for analytics
     let guidance_tokens = panda_core::tokens::count_tokens(&guidance.guidance_text);
-    let excluded_tokens_est = total_files.saturating_sub(recommended_count) * 50; // rough estimate
+    // Use real avg tokens/file from session_reads when available, fall back to 50
+    let avg_tokens_per_file = crate::analytics_db::avg_tokens_per_read()
+        .unwrap_or(50);
+    let excluded_tokens_est = total_files.saturating_sub(recommended_count) * avg_tokens_per_file;
     let _ = crate::analytics_db::record_guidance(
         &sid,
         recommended_count,

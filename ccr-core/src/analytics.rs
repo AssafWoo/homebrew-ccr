@@ -21,6 +21,10 @@ pub struct Analytics {
     /// Agent that produced this record: "claude" | "cursor" | None (legacy = claude)
     #[serde(default)]
     pub agent: Option<String>,
+    /// Model active when this record was created, e.g. "claude-sonnet-4-6".
+    /// Captured from ANTHROPIC_MODEL env var during hook execution.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl Analytics {
@@ -63,6 +67,7 @@ impl Analytics {
             duration_ms,
             cache_hit: false,
             agent: None,
+            model: None,
         }
     }
 

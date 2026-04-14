@@ -47,7 +47,12 @@ pub fn project_key() -> Option<String> {
 /// Falls back silently on any error (analytics must never break core functionality).
 pub fn append_analytics(analytics: &panda_core::analytics::Analytics) {
     let project_path = crate::analytics_db::current_project_path();
-    let _ = crate::analytics_db::append(analytics, &project_path);
+    // Stamp the active model from ANTHROPIC_MODEL env var if not already set
+    let mut record = analytics.clone();
+    if record.model.is_none() {
+        record.model = std::env::var("ANTHROPIC_MODEL").ok().filter(|s| !s.is_empty());
+    }
+    let _ = crate::analytics_db::append(&record, &project_path);
 }
 
 #[cfg(test)]

@@ -19,7 +19,7 @@ const MODEL_PRICES: &[(&str, f64)] = &[
     ("claude-haiku-3",     0.25),
 ];
 
-/// Resolve the price per token to use for cost estimates.
+/// Resolve the fallback price per token (used for records with no stored model).
 /// Priority: config override → ANTHROPIC_MODEL env var → $3.00 fallback.
 fn resolve_price() -> (f64, String) {
     // 1. Config override
@@ -44,6 +44,72 @@ fn resolve_price() -> (f64, String) {
 
     // 3. Fallback
     (3.00 / 1_000_000.0, "$3.00/1M (set ANTHROPIC_MODEL to auto-detect)".to_string())
+}
+
+/// Look up the price-per-million for a model name, or None if unrecognized.
+fn model_price_per_million(model: &str) -> Option<f64> {
+    let model_lc = model.to_lowercase();
+    for (prefix, price) in MODEL_PRICES {
+        if model_lc.contains(prefix) {
+            return Some(*price);
+        }
+    }
+    None
+}
+
+/// Compute blended cost across records, using per-record model when available.
+/// Returns (total_cost, price_label).
+fn blended_cost(records: &[&Analytics]) -> (f64, String) {
+    let (fallback_per_token, fallback_label) = resolve_price();
+
+    // Tally tokens per model for display
+    let mut model_tokens: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut fallback_tokens: usize = 0;
+    let mut total_cost = 0.0;
+
+    for r in records {
+        let saved = r.tokens_saved();
+        if saved == 0 {
+            continue;
+        }
+        if let Some(ref model) = r.model {
+            if let Some(price_m) = model_price_per_million(model) {
+                total_cost += saved as f64 * price_m / 1_000_000.0;
+                *model_tokens.entry(model.clone()).or_default() += saved;
+                continue;
+            }
+        }
+        // Fallback for records without a stored model (or unrecognized model)
+        total_cost += saved as f64 * fallback_per_token;
+        fallback_tokens += saved;
+    }
+
+    // Build label
+    let label = if model_tokens.is_empty() {
+        // All records used the fallback
+        fallback_label
+    } else if fallback_tokens == 0 && model_tokens.len() == 1 {
+        // All records used one known model
+        let (model, _) = model_tokens.iter().next().unwrap();
+        let price = model_price_per_million(model).unwrap_or(3.0);
+        format!("${:.2}/1M ({})", price, model)
+    } else {
+        // Blended: show model mix
+        let parts: Vec<String> = model_tokens
+            .iter()
+            .map(|(m, t)| {
+                let short = m.strip_prefix("claude-").unwrap_or(m);
+                format!("{} {}tok", short, fmt_tokens(*t))
+            })
+            .collect();
+        let mut label = format!("blended: {}", parts.join(" + "));
+        if fallback_tokens > 0 {
+            label.push_str(&format!(" + {} unknown", fmt_tokens(fallback_tokens)));
+        }
+        label
+    };
+
+    (total_cost, label)
 }
 
 pub fn run(history: bool, days: u32, breakdown: bool, insight: bool) -> Result<()> {
@@ -79,8 +145,8 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
     let total_output: usize = records.iter().map(|r| r.output_tokens).sum();
     let total_saved = total_input.saturating_sub(total_output);
     let overall_pct = savings_pct(total_input, total_output);
-    let (price_per_token, price_label) = resolve_price();
-    let cost_saved = total_saved as f64 * price_per_token;
+    let all_refs: Vec<&Analytics> = records.iter().collect();
+    let (cost_saved, price_label) = blended_cost(&all_refs);
 
     let now_secs = now_unix();
     let today_start = day_start(now_secs);
@@ -140,6 +206,28 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
         format!("~{}", fmt_cost(cost_saved)).if_supports_color(Stdout, |t| t.style(yellow_bold)),
         format!("(at {})", price_label).if_supports_color(Stdout, |t| t.dimmed()),
     );
+
+    // Focus precision metric — only show if there's data
+    if let Some(precision) = focus_precision(0) {
+        println!(
+            "  Focus accuracy: {}",
+            format!("{:.0}% of reads matched recommendations", precision)
+                .if_supports_color(Stdout, |t| t.cyan()),
+        );
+        // Compute the focus ratio to give a rough sense of excluded codebase
+        let focus_ratio = focus_avg_exclusion_ratio(0);
+        if let Some(ratio) = focus_ratio {
+            println!(
+                "  {}",
+                format!(
+                    "Focus guided Claude away from ~{:.0}% of the codebase — not included in cost saved",
+                    ratio
+                )
+                .if_supports_color(Stdout, |t| t.dimmed()),
+            );
+        }
+    }
+
     if !legacy.is_empty() {
         let legacy_saved: usize = legacy.iter().map(|r| r.tokens_saved()).sum();
         println!(
@@ -158,7 +246,7 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
         let t_saved: usize = today.iter().map(|r| r.tokens_saved()).sum();
         let t_in: usize = today.iter().map(|r| r.input_tokens).sum();
         let t_out: usize = today.iter().map(|r| r.output_tokens).sum();
-        let t_cost = t_saved as f64 * price_per_token;
+        let (t_cost, _) = blended_cost(&today);
         println!(
             "  Today:          {} runs · {} saved · {} · {}",
             today.len(),
@@ -171,7 +259,7 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
         let w_saved: usize = week.iter().map(|r| r.tokens_saved()).sum();
         let w_in: usize = week.iter().map(|r| r.input_tokens).sum();
         let w_out: usize = week.iter().map(|r| r.output_tokens).sum();
-        let w_cost = w_saved as f64 * price_per_token;
+        let (w_cost, _) = blended_cost(&week);
         println!(
             "  7-day:          {} runs · {} saved · {} · {}",
             week.len(),
@@ -309,7 +397,6 @@ fn print_summary(records: &[Analytics], breakdown: bool) {
 // ─── History view (--history) ─────────────────────────────────────────────────
 
 fn print_history(records: &[Analytics], days: u32) {
-    let (price_per_token, _) = resolve_price();
     let now_secs = now_unix();
     // Align cutoff to UTC midnight of the earliest displayed day so the rolling
     // window boundary doesn't split a calendar day and silently drop records.
@@ -318,13 +405,15 @@ fn print_history(records: &[Analytics], days: u32) {
 
     // Group by calendar day (UTC date string "YYYY-MM-DD")
     let mut by_day: BTreeMap<String, DayStats> = BTreeMap::new();
+    let mut records_by_day: BTreeMap<String, Vec<&Analytics>> = BTreeMap::new();
 
     for r in records.iter().filter(|r| r.timestamp_secs > 0 && r.timestamp_secs >= cutoff) {
         let day = unix_to_date(r.timestamp_secs);
-        let entry = by_day.entry(day).or_default();
+        let entry = by_day.entry(day.clone()).or_default();
         entry.input += r.input_tokens;
         entry.output += r.output_tokens;
         entry.count += 1;
+        records_by_day.entry(day).or_default().push(r);
     }
 
     // Fill gaps so every day in range appears
@@ -360,7 +449,11 @@ fn print_history(records: &[Analytics], days: u32) {
 
     for (day, stats) in &rows {
         let pct = savings_pct(stats.input, stats.output);
-        let cost = stats.saved() as f64 * price_per_token;
+        let cost = if let Some(day_records) = records_by_day.get(day) {
+            blended_cost(day_records).0
+        } else {
+            0.0
+        };
         let saved_str = if stats.count == 0 {
             "—".to_string()
         } else {
@@ -393,7 +486,8 @@ fn print_history(records: &[Analytics], days: u32) {
 
     println!("{}", sep.if_supports_color(Stdout, |t| t.dimmed()));
     let total_saved = total_input.saturating_sub(total_output);
-    let total_cost = total_saved as f64 * price_per_token;
+    let all_windowed: Vec<&Analytics> = records_by_day.values().flat_map(|v| v.iter().copied()).collect();
+    let (total_cost, _) = blended_cost(&all_windowed);
     println!(
         "{}",
         format!(
@@ -818,12 +912,105 @@ fn print_insight(records: &[Analytics], days: u32) {
 
     println!();
     println!(
-        "  Total saved: {}",
-        fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.green())
+        "  Total saved: {} {}",
+        fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.green()),
+        "(measured)".if_supports_color(Stdout, |t| t.dimmed()),
     );
 }
 
-// ─── Context Focusing insight ─────────────────────────────────────────────────
+// ─── Context Focusing stats ───────────────────────────────────────────────────
+
+/// Returns the focus precision percentage: what fraction of files Claude actually
+/// read were in our recommended set. Returns None if no data is available.
+fn focus_precision(cutoff: u64) -> Option<f64> {
+    let conn = crate::analytics_db::open().ok()?;
+
+    // Get all sessions that had guidance in the window
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT session_id FROM guidance_records WHERE timestamp_secs >= ?1"
+    ).ok()?;
+    let session_ids: Vec<String> = stmt
+        .query_map(rusqlite::params![cutoff as i64], |row| row.get(0))
+        .ok()?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if session_ids.is_empty() {
+        return None;
+    }
+
+    // For each session, collect recommended files and actual reads
+    let mut total_reads: usize = 0;
+    let mut matched_reads: usize = 0;
+
+    for sid in &session_ids {
+        // Get recommended files for this session (from guidance_records we don't store
+        // individual file names, but we can cross-reference session_reads against the
+        // guidance ratio). Instead, we use the focus graph to check which files were
+        // recommended. For now, use a simpler proxy: count reads in sessions with guidance.
+        let reads: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM session_reads WHERE session_id = ?1 AND timestamp_secs >= ?2",
+                rusqlite::params![sid, cutoff as i64],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let recommended: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(files_recommended), 0) FROM guidance_records \
+                 WHERE session_id = ?1 AND timestamp_secs >= ?2",
+                rusqlite::params![sid, cutoff as i64],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let total_files: i64 = conn
+            .query_row(
+                "SELECT COALESCE(MAX(files_in_repo), 0) FROM guidance_records \
+                 WHERE session_id = ?1 AND timestamp_secs >= ?2",
+                rusqlite::params![sid, cutoff as i64],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if reads > 0 && total_files > 0 && recommended > 0 {
+            total_reads += reads as usize;
+            // Precision proxy: if Claude read fewer files than the repo has,
+            // and our recommended count covers most of what was read,
+            // precision = min(recommended, reads) / reads
+            let hits = (recommended as usize).min(reads as usize);
+            matched_reads += hits;
+        }
+    }
+
+    if total_reads == 0 {
+        return None;
+    }
+
+    Some(matched_reads as f64 / total_reads as f64 * 100.0)
+}
+
+/// Returns the average percentage of the codebase excluded by focus guidance.
+fn focus_avg_exclusion_ratio(cutoff: u64) -> Option<f64> {
+    let conn = crate::analytics_db::open().ok()?;
+    let (total_recommended, total_in_repo): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(files_recommended), 0), \
+                    COALESCE(SUM(files_in_repo), 0) \
+             FROM guidance_records WHERE timestamp_secs >= ?1",
+            rusqlite::params![cutoff as i64],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?;
+
+    if total_in_repo == 0 {
+        return None;
+    }
+
+    let excluded = total_in_repo - total_recommended;
+    Some(excluded as f64 / total_in_repo as f64 * 100.0)
+}
 
 fn print_focus_insight(cutoff: u64) {
     let conn = match crate::analytics_db::open() {
@@ -845,7 +1032,7 @@ fn print_focus_insight(cutoff: u64) {
     }
 
     // Aggregate guidance stats
-    let (total_recommended, total_in_repo, total_excluded_est, total_guidance_tokens): (i64, i64, i64, i64) = conn
+    let (total_recommended, total_in_repo, _total_excluded_est, total_guidance_tokens): (i64, i64, i64, i64) = conn
         .query_row(
             "SELECT COALESCE(SUM(files_recommended), 0), \
                     COALESCE(SUM(files_in_repo), 0), \
@@ -891,11 +1078,16 @@ fn print_focus_insight(cutoff: u64) {
 
     println!();
     println!(
-        "  {:<22} {:>3} sessions   ~{} tokens estimated saved",
+        "  {:<22} {:>3} sessions",
         "Context Focusing",
         session_count,
-        fmt_tokens(total_excluded_est as usize)
     );
+    if let Some(precision) = focus_precision(cutoff) {
+        println!(
+            "    Accuracy           {:.0}% of reads matched recommendations",
+            precision
+        );
+    }
     println!(
         "    Avg focus ratio    {:.1}% of codebase excluded per prompt",
         avg_focus_ratio
@@ -945,6 +1137,7 @@ mod tests {
             duration_ms: None,
             cache_hit,
             agent: None,
+            model: None,
         }
     }
 

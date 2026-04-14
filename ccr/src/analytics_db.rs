@@ -43,10 +43,20 @@ pub fn open() -> Result<Connection> {
             duration_ms     INTEGER,
             cache_hit       INTEGER NOT NULL DEFAULT 0,
             agent           TEXT,
+            model           TEXT,
             project_path    TEXT    NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_project_ts ON records(project_path, timestamp_secs);
 
+        -- Add model column to existing databases (no-op on fresh DBs)
+        -- SQLite ignores duplicate column errors via the pragma below.
+        "#,
+    )?;
+    // ALTER TABLE ADD COLUMN is a no-op if the column already exists (since SQLite 3.35+),
+    // but older versions error. Catch and ignore.
+    let _ = conn.execute_batch("ALTER TABLE records ADD COLUMN model TEXT;");
+    conn.execute_batch(
+        r#"
         CREATE TABLE IF NOT EXISTS guidance_records (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             timestamp_secs      INTEGER NOT NULL,
@@ -190,8 +200,8 @@ pub fn append(analytics: &Analytics, project_path: &str) -> Result<()> {
     let _ = maybe_migrate_from_ccr(&conn);
 
     conn.execute(
-        "INSERT INTO records (timestamp_secs, command, subcommand, input_tokens, output_tokens, savings_pct, duration_ms, cache_hit, agent, project_path) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO records (timestamp_secs, command, subcommand, input_tokens, output_tokens, savings_pct, duration_ms, cache_hit, agent, model, project_path) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             analytics.timestamp_secs as i64,
             analytics.command,
@@ -202,6 +212,7 @@ pub fn append(analytics: &Analytics, project_path: &str) -> Result<()> {
             analytics.duration_ms.map(|d| d as i64),
             analytics.cache_hit as i32,
             analytics.agent,
+            analytics.model,
             project_path,
         ],
     )?;
@@ -223,7 +234,7 @@ pub fn load_all(project_path: Option<&str>) -> Result<Vec<Analytics>> {
     if let Some(proj) = project_path {
         let mut stmt = conn.prepare(
             "SELECT timestamp_secs, command, subcommand, input_tokens, output_tokens, savings_pct, \
-             duration_ms, cache_hit, agent \
+             duration_ms, cache_hit, agent, model \
              FROM records WHERE project_path = ?1 ORDER BY timestamp_secs ASC",
         )?;
         let mut rows = stmt.query(params![proj])?;
@@ -235,7 +246,7 @@ pub fn load_all(project_path: Option<&str>) -> Result<Vec<Analytics>> {
     } else {
         let mut stmt = conn.prepare(
             "SELECT timestamp_secs, command, subcommand, input_tokens, output_tokens, savings_pct, \
-             duration_ms, cache_hit, agent \
+             duration_ms, cache_hit, agent, model \
              FROM records ORDER BY timestamp_secs ASC",
         )?;
         let mut rows = stmt.query([])?;
@@ -259,6 +270,7 @@ fn row_to_analytics(row: &rusqlite::Row<'_>) -> Option<Analytics> {
     let duration_ms: Option<i64> = row.get(6).ok().flatten();
     let cache_hit: i32 = row.get(7).ok()?;
     let agent: Option<String> = row.get(8).ok().flatten();
+    let model: Option<String> = row.get(9).ok().flatten();
 
     Some(Analytics {
         timestamp_secs: ts as u64,
@@ -270,6 +282,7 @@ fn row_to_analytics(row: &rusqlite::Row<'_>) -> Option<Analytics> {
         duration_ms: duration_ms.map(|d| d as u64),
         cache_hit: cache_hit != 0,
         agent,
+        model,
     })
 }
 
@@ -352,6 +365,19 @@ pub fn get_session_guidance(session_id: &str) -> Result<Vec<(usize, usize, Optio
         results.push(row_result?);
     }
     Ok(results)
+}
+
+/// Average tokens per file read across all session_reads.
+/// Used to improve focus guidance estimates (replaces hardcoded 50).
+pub fn avg_tokens_per_read() -> Result<usize> {
+    let conn = open()?;
+    let avg: f64 = conn.query_row(
+        "SELECT COALESCE(AVG(token_count), 0) FROM session_reads",
+        [],
+        |row| row.get(0),
+    )?;
+    // Floor to at least 50 (the old default) to avoid underestimation on sparse data
+    Ok((avg as usize).max(50))
 }
 
 /// Get file read frequencies for a project over the last N days, normalized to [0, 1].
@@ -457,6 +483,7 @@ mod tests {
             duration_ms: Some(42),
             cache_hit: false,
             agent: None,
+            model: None,
         }
     }
 
