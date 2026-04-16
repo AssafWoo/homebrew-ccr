@@ -717,204 +717,318 @@ fn unix_to_month_day(ts: u64) -> String {
 
 // ─── Insight view (--insight) ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum SavingsCategory {
-    NoiseReduction,
-    BuildFiltering,
-    PipelineSavings,
-    CommandCompression,
-}
-
-#[derive(Default)]
-struct CategoryStats {
-    saved: usize,
-    input: usize,
-    count: usize,
-    /// command name → run count within this category
-    commands: std::collections::BTreeMap<String, usize>,
-    cache_hits: usize,
-}
-
-fn categorize(cmd: Option<&str>, cache_hit: bool) -> SavingsCategory {
-    if cache_hit {
-        return SavingsCategory::PipelineSavings;
-    }
-    let raw = match cmd {
-        None => return SavingsCategory::PipelineSavings,
-        Some(s) => s,
-    };
-    // Check pipeline event markers first (these are exact stored values)
-    let first_token = raw.split_whitespace().next().unwrap_or(raw);
-    match first_token {
-        "(read)" | "(read-level)" | "(glob)" | "(grep-tool)" | "(pipeline)" => {
-            return SavingsCategory::PipelineSavings;
-        }
-        _ => {}
-    }
-    // Normalize to get the effective command name (handles env vars, paths, rtk prefix)
-    let normalized = normalize_cmd_key(Some(raw));
-    let cmd_name = normalized.split_whitespace().next().unwrap_or(&normalized);
-    match cmd_name {
-        "(pipeline)" => SavingsCategory::PipelineSavings,
-        "find" | "ls" | "tree" => SavingsCategory::NoiseReduction,
-        "cargo" | "go" | "npm" | "yarn" | "pnpm" | "make" | "gmake"
-        | "mvn" | "gradle" | "pytest" | "jest" | "vitest" | "rspec"
-        | "tsc" | "ruff" | "mypy" | "rubocop" | "eslint" | "biome"
-        | "playwright" | "nx" | "turbo" | "uv" | "pip" | "rake"
-        | "ember" | "next" | "webpack" | "vite" | "stylelint" | "prettier" => {
-            SavingsCategory::BuildFiltering
-        }
-        _ => SavingsCategory::CommandCompression,
-    }
-}
-
-fn format_save_label(r: &Analytics) -> String {
-    let cmd = normalize_cmd_key(r.command.as_deref());
-    match r.subcommand.as_deref() {
-        Some(sub) if !sub.is_empty() => {
-            let sub_display = if sub.len() > 30 {
-                format!("\u{2026}{}", &sub[sub.len() - 28..])
-            } else {
-                sub.to_string()
-            };
-            format!("{} {}", cmd, sub_display)
-        }
-        _ => cmd,
-    }
-}
-
-/// Aggregate windowed records into per-category stats and a time-ordered list.
-/// Returns (category_map, windowed_records_sorted_by_tokens_saved_desc).
-fn aggregate_by_category(
-    records: &[Analytics],
-    cutoff: u64,
-) -> (BTreeMap<SavingsCategory, CategoryStats>, Vec<usize>) {
-    // Collect indices of records that pass the window filter
-    let windowed_indices: Vec<usize> = records
-        .iter()
-        .enumerate()
-        .filter(|(_, r)| r.timestamp_secs > 0 && r.timestamp_secs >= cutoff)
-        .map(|(i, _)| i)
-        .collect();
-
-    let mut by_category: BTreeMap<SavingsCategory, CategoryStats> = BTreeMap::new();
-    for &i in &windowed_indices {
-        let r = &records[i];
-        let cat = categorize(r.command.as_deref(), r.cache_hit);
-        let stats = by_category.entry(cat).or_default();
-        stats.saved += r.tokens_saved();
-        stats.input += r.input_tokens;
-        stats.count += 1;
-        let cmd_key = normalize_cmd_key(r.command.as_deref());
-        *stats.commands.entry(cmd_key).or_default() += 1;
-        if r.cache_hit {
-            stats.cache_hits += 1;
-        }
-    }
-
-    // Sort indices by tokens_saved descending for top-saves list
-    let mut sorted = windowed_indices;
-    sorted.sort_by(|&a, &b| records[b].tokens_saved().cmp(&records[a].tokens_saved()));
-
-    (by_category, sorted)
-}
-
 fn print_insight(records: &[Analytics], days: u32) {
     let now_secs = now_unix();
     let first_day_ts = now_secs.saturating_sub((days as u64).saturating_sub(1) * 86400);
     let cutoff = first_day_ts - (first_day_ts % 86400);
 
+    // Collect windowed records
+    let windowed: Vec<&Analytics> = records
+        .iter()
+        .filter(|r| r.timestamp_secs > 0 && r.timestamp_secs >= cutoff)
+        .collect();
+
     println!(
         "{}",
-        format!("Your token savings  (last {} days)", days)
+        format!("PandaFilter — last {} days", days)
             .if_supports_color(Stdout, |t| t.bold())
     );
-    println!("{}", "═".repeat(55).if_supports_color(Stdout, |t| t.dimmed()));
-    println!();
+    println!("{}", "═".repeat(58).if_supports_color(Stdout, |t| t.dimmed()));
 
-    let (by_category, sorted_indices) = aggregate_by_category(records, cutoff);
-
-    if sorted_indices.is_empty() {
+    if windowed.is_empty() {
+        println!();
         println!("  No token savings recorded in this period.");
         return;
     }
 
-    let total_saved: usize = sorted_indices.iter().map(|&i| records[i].tokens_saved()).sum();
+    let total_input: usize = windowed.iter().map(|r| r.input_tokens).sum();
+    let total_output: usize = windowed.iter().map(|r| r.output_tokens).sum();
+    let total_saved = total_input.saturating_sub(total_output);
+    let total_runs = windowed.len();
+    let (cost_saved, _) = blended_cost(&windowed);
+    let cache_hits: usize = windowed.iter().filter(|r| r.cache_hit).count();
 
-    // Render categories in fixed order
-    let category_order: &[(SavingsCategory, &str)] = &[
-        (SavingsCategory::NoiseReduction, "Noise reduction"),
-        (SavingsCategory::BuildFiltering, "Build filtering"),
-        (SavingsCategory::PipelineSavings, "Pipeline savings"),
-        (SavingsCategory::CommandCompression, "Command compression"),
-    ];
+    let green_bold = Style::new().green().bold();
+    let yellow_bold = Style::new().yellow().bold();
 
-    for (cat, label) in category_order {
-        if let Some(stats) = by_category.get(cat) {
-            let pct = if total_saved > 0 {
-                stats.saved as f32 / total_saved as f32 * 100.0
-            } else {
-                0.0
-            };
-
-            // Top 3 commands by run count
-            let mut cmd_list: Vec<(&String, &usize)> = stats.commands.iter().collect();
-            cmd_list.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
-            let shown = cmd_list.len().min(3);
-            let extra = cmd_list.len().saturating_sub(3);
-            let mut cmd_parts: Vec<String> = cmd_list[..shown]
-                .iter()
-                .map(|(k, v)| format!("{} \u{00d7} {}", k, v))
-                .collect();
-            if extra > 0 {
-                cmd_parts.push(format!("+{} more", extra));
-            }
-            let mut cmd_str = cmd_parts.join(", ");
-            if *cat == SavingsCategory::PipelineSavings && stats.cache_hits > 0 {
-                let s = if stats.cache_hits == 1 { "" } else { "s" };
-                cmd_str.push_str(&format!(", incl. {} cache hit{}", stats.cache_hits, s));
-            }
-
-            let saved_str = fmt_tokens(stats.saved);
-            let pct_str = format!("{:.0}%", pct);
-            let line = format!(
-                "  {:<22} {:>6}  {:>4}   {}",
-                label, saved_str, pct_str, cmd_str
-            );
-
-            if pct >= 40.0 {
-                println!("{}", line.if_supports_color(Stdout, |t| t.green()));
-            } else if pct >= 15.0 {
-                println!("{}", line.if_supports_color(Stdout, |t| t.yellow()));
-            } else {
-                println!("{}", line.if_supports_color(Stdout, |t| t.dimmed()));
-            }
-        }
-    }
-
-    println!();
-
-    // Top 5 saves
-    let top_n = sorted_indices.len().min(5);
-    if top_n > 0 {
-        println!("  Top {} saves:", top_n);
-        for &i in &sorted_indices[..top_n] {
-            let r = &records[i];
-            let label = format_save_label(r);
-            let date = unix_to_month_day(r.timestamp_secs);
-            let saved = fmt_tokens(r.tokens_saved());
-            println!("    {:<32} {:<8}  {:>6}", label, date, saved);
-        }
-    }
-
-    // Context Focusing insight
-    print_focus_insight(cutoff);
-
+    // ── Headline ─────────────────────────────────────────────────────────────
     println!();
     println!(
-        "  Total saved: {} {}",
-        fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.green()),
-        "(measured)".if_supports_color(Stdout, |t| t.dimmed()),
+        "  {} runs  ·  {} tokens saved  ·  {}",
+        fmt_number(total_runs).if_supports_color(Stdout, |t| t.bold()),
+        fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.style(green_bold)),
+        format!("~{}", fmt_cost(cost_saved)).if_supports_color(Stdout, |t| t.style(yellow_bold)),
+    );
+
+    // Monthly projection
+    let window_days = days.max(1) as f64;
+    let monthly_cost = cost_saved / window_days * 30.0;
+    if monthly_cost > 0.001 {
+        println!(
+            "  {}",
+            format!("At this rate: ~{}/month", fmt_cost(monthly_cost))
+                .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+
+    // ── Per-command table ────────────────────────────────────────────────────
+    println!();
+    println!(
+        "  {}",
+        "Where savings came from:".if_supports_color(Stdout, |t| t.bold())
+    );
+    println!();
+
+    // Aggregate by normalized command name (skip cache hits — shown separately)
+    let mut by_cmd: BTreeMap<String, InsightCmdStats> = BTreeMap::new();
+    for r in &windowed {
+        if r.cache_hit {
+            continue;
+        }
+        let key = normalize_cmd_key(r.command.as_deref());
+        let e = by_cmd.entry(key).or_default();
+        e.input += r.input_tokens;
+        e.output += r.output_tokens;
+        e.count += 1;
+    }
+
+    let mut cmd_rows: Vec<(String, InsightCmdStats)> = by_cmd.into_iter().collect();
+    cmd_rows.sort_by(|a, b| b.1.saved().cmp(&a.1.saved()));
+
+    // Show top 8 commands, aggregate the rest
+    let show_count = cmd_rows.len().min(8);
+    let max_saved = cmd_rows.first().map(|(_, s)| s.saved()).unwrap_or(1).max(1);
+
+    for (cmd, stats) in &cmd_rows[..show_count] {
+        let saved = stats.saved();
+        let compression = savings_pct(stats.input, stats.output);
+        let bar_width = ((saved as f64 / max_saved as f64) * 20.0) as usize;
+        let bar = if bar_width > 0 {
+            "█".repeat(bar_width)
+        } else {
+            "░".to_string()
+        };
+
+        let bar_colored = if compression >= 60.0 {
+            bar.if_supports_color(Stdout, |t| t.green()).to_string()
+        } else if compression >= 30.0 {
+            bar.if_supports_color(Stdout, |t| t.yellow()).to_string()
+        } else {
+            bar.if_supports_color(Stdout, |t| t.dimmed()).to_string()
+        };
+
+        println!(
+            "  {:<20} {:>7} saved   {:>4.0}% compressed   {}",
+            cmd.if_supports_color(Stdout, |t| t.bold()),
+            fmt_tokens(saved),
+            compression,
+            bar_colored,
+        );
+    }
+
+    // Remaining commands
+    if cmd_rows.len() > show_count {
+        let rest = &cmd_rows[show_count..];
+        let rest_saved: usize = rest.iter().map(|(_, s)| s.saved()).sum();
+        let rest_count: usize = rest.iter().map(|(_, s)| s.count).sum();
+        let rest_cmds = rest.len();
+        println!(
+            "  {}",
+            format!(
+                "+ {} more commands       {:>7} saved   {} runs",
+                rest_cmds,
+                fmt_tokens(rest_saved),
+                fmt_number(rest_count),
+            )
+            .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+
+    // ── Cache hits ───────────────────────────────────────────────────────────
+    if cache_hits > 0 {
+        println!();
+        println!(
+            "  {} — repeated output detected and collapsed",
+            format!("{} cache hits", cache_hits).if_supports_color(Stdout, |t| t.cyan()),
+        );
+    }
+
+    // ── Biggest single save ──────────────────────────────────────────────────
+    if let Some(biggest) = windowed.iter().max_by_key(|r| r.tokens_saved()) {
+        let label = normalize_cmd_key(biggest.command.as_deref());
+        let date = unix_to_month_day(biggest.timestamp_secs);
+        println!();
+        println!(
+            "  Biggest save: {} from {} {}",
+            fmt_tokens(biggest.tokens_saved()).if_supports_color(Stdout, |t| t.style(green_bold)),
+            label.if_supports_color(Stdout, |t| t.bold()),
+            format!("({})", date).if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+
+    // ── Context Focusing ─────────────────────────────────────────────────────
+    print_focus_insight_compact(cutoff);
+
+    // ── Tip ──────────────────────────────────────────────────────────────────
+    print_insight_tip(&cmd_rows, total_saved, cache_hits, cutoff);
+}
+
+#[derive(Default)]
+struct InsightCmdStats {
+    input: usize,
+    output: usize,
+    count: usize,
+}
+
+impl InsightCmdStats {
+    fn saved(&self) -> usize {
+        self.input.saturating_sub(self.output)
+    }
+}
+
+fn fmt_number(n: usize) -> String {
+    if n < 1_000 {
+        format!("{}", n)
+    } else if n < 1_000_000 {
+        format!("{},{:03}", n / 1_000, n % 1_000)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
+}
+
+/// Compact focus section for the insight view — 2 lines max.
+fn print_focus_insight_compact(cutoff: u64) {
+    let conn = match crate::analytics_db::open() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let session_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT session_id) FROM guidance_records WHERE timestamp_secs >= ?1",
+            rusqlite::params![cutoff as i64],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    if session_count == 0 {
+        return;
+    }
+
+    let (total_recommended, total_in_repo): (i64, i64) = conn
+        .query_row(
+            "SELECT COALESCE(SUM(files_recommended), 0), \
+                    COALESCE(SUM(files_in_repo), 0) \
+             FROM guidance_records WHERE timestamp_secs >= ?1",
+            rusqlite::params![cutoff as i64],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap_or((0, 0));
+
+    let guidance_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM guidance_records WHERE timestamp_secs >= ?1",
+            rusqlite::params![cutoff as i64],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let avg_recommended = if guidance_count > 0 {
+        total_recommended as f64 / guidance_count as f64
+    } else {
+        0.0
+    };
+
+    let exclusion_pct = if total_in_repo > 0 {
+        (total_in_repo - total_recommended) as f64 / total_in_repo as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    println!();
+    let s = if session_count == 1 { "" } else { "s" };
+    println!(
+        "  {} — {} session{}",
+        "Context Focusing".if_supports_color(Stdout, |t| t.bold()),
+        session_count,
+        s,
+    );
+    println!(
+        "    ~{:.0} files recommended per prompt · {:.0}% of codebase excluded",
+        avg_recommended, exclusion_pct,
+    );
+}
+
+/// Print an actionable tip based on the user's data.
+fn print_insight_tip(
+    cmd_rows: &[(String, InsightCmdStats)],
+    total_saved: usize,
+    _cache_hits: usize,
+    cutoff: u64,
+) {
+    println!();
+
+    // Check if focus is enabled (has guidance records)
+    let focus_active = crate::analytics_db::open()
+        .ok()
+        .and_then(|conn| {
+            conn.query_row(
+                "SELECT COUNT(*) FROM guidance_records WHERE timestamp_secs >= ?1",
+                rusqlite::params![cutoff as i64],
+                |row| row.get::<_, i64>(0),
+            )
+            .ok()
+        })
+        .unwrap_or(0)
+        > 0;
+
+    // Tip 1: If one command dominates savings (>80%), mention it
+    if let Some((top_cmd, top_stats)) = cmd_rows.first() {
+        let top_pct = if total_saved > 0 {
+            top_stats.saved() as f64 / total_saved as f64 * 100.0
+        } else {
+            0.0
+        };
+        if top_pct > 80.0 && total_saved > 10_000 {
+            println!(
+                "  {} {:.0}% of savings come from {}.",
+                "Tip:".if_supports_color(Stdout, |t| t.style(Style::new().cyan().bold())),
+                top_pct,
+                top_cmd.if_supports_color(Stdout, |t| t.bold()),
+            );
+            if !focus_active {
+                println!(
+                    "       Run {} to guide Claude to relevant files first.",
+                    "panda focus --enable".if_supports_color(Stdout, |t| t.cyan()),
+                );
+            } else {
+                println!(
+                    "       Run {} for a full per-command breakdown.",
+                    "panda gain --breakdown".if_supports_color(Stdout, |t| t.cyan()),
+                );
+            }
+            return;
+        }
+    }
+
+    // Tip 2: If focus is not enabled, suggest it
+    if !focus_active {
+        println!(
+            "  {} Enable Context Focusing to guide Claude to the right files:",
+            "Tip:".if_supports_color(Stdout, |t| t.style(Style::new().cyan().bold())),
+        );
+        println!(
+            "       {}",
+            "panda focus --enable".if_supports_color(Stdout, |t| t.cyan()),
+        );
+        return;
+    }
+
+    // Tip 3: Generic encouragement
+    println!(
+        "  {} Run {} for per-command details.",
+        "Tip:".if_supports_color(Stdout, |t| t.style(Style::new().cyan().bold())),
+        "panda gain --breakdown".if_supports_color(Stdout, |t| t.cyan()),
     );
 }
 
@@ -1012,101 +1126,6 @@ fn focus_avg_exclusion_ratio(cutoff: u64) -> Option<f64> {
     Some(excluded as f64 / total_in_repo as f64 * 100.0)
 }
 
-fn print_focus_insight(cutoff: u64) {
-    let conn = match crate::analytics_db::open() {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    // Count guidance events in the window
-    let guidance_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM guidance_records WHERE timestamp_secs >= ?1",
-            rusqlite::params![cutoff as i64],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-
-    if guidance_count == 0 {
-        return;
-    }
-
-    // Aggregate guidance stats
-    let (total_recommended, total_in_repo, _total_excluded_est, total_guidance_tokens): (i64, i64, i64, i64) = conn
-        .query_row(
-            "SELECT COALESCE(SUM(files_recommended), 0), \
-                    COALESCE(SUM(files_in_repo), 0), \
-                    COALESCE(SUM(excluded_tokens_est), 0), \
-                    COALESCE(SUM(guidance_tokens), 0) \
-             FROM guidance_records WHERE timestamp_secs >= ?1",
-            rusqlite::params![cutoff as i64],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        )
-        .unwrap_or((0, 0, 0, 0));
-
-    // Count unique sessions with guidance
-    let session_count: i64 = conn
-        .query_row(
-            "SELECT COUNT(DISTINCT session_id) FROM guidance_records WHERE timestamp_secs >= ?1",
-            rusqlite::params![cutoff as i64],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-
-    // Count reads that matched recommended files (precision)
-    let reads_total: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM session_reads WHERE timestamp_secs >= ?1",
-            rusqlite::params![cutoff as i64],
-            |row| row.get(0),
-        )
-        .unwrap_or(0);
-
-    // Compute average focus ratio
-    let avg_focus_ratio = if total_in_repo > 0 {
-        let excluded = total_in_repo - total_recommended;
-        excluded as f64 / total_in_repo as f64 * 100.0
-    } else {
-        0.0
-    };
-
-    let avg_recommended = if guidance_count > 0 {
-        total_recommended as f64 / guidance_count as f64
-    } else {
-        0.0
-    };
-
-    println!();
-    println!(
-        "  {:<22} {:>3} sessions",
-        "Context Focusing",
-        session_count,
-    );
-    if let Some(precision) = focus_precision(cutoff) {
-        println!(
-            "    Accuracy           {:.0}% of reads matched recommendations",
-            precision
-        );
-    }
-    println!(
-        "    Avg focus ratio    {:.1}% of codebase excluded per prompt",
-        avg_focus_ratio
-    );
-    println!(
-        "    Avg recommended    {:.1} files per prompt",
-        avg_recommended
-    );
-    if reads_total > 0 {
-        println!(
-            "    File reads tracked {} across {} sessions",
-            reads_total, session_count
-        );
-    }
-    println!(
-        "    Guidance overhead  {} tokens total",
-        fmt_tokens(total_guidance_tokens as usize)
-    );
-}
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -1114,6 +1133,103 @@ fn print_focus_insight(cutoff: u64) {
 mod tests {
     use super::*;
     use panda_core::analytics::Analytics;
+
+    // Legacy insight types — kept for existing test coverage.
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+    enum SavingsCategory {
+        NoiseReduction,
+        BuildFiltering,
+        PipelineSavings,
+        CommandCompression,
+    }
+
+    #[derive(Default)]
+    struct CategoryStats {
+        saved: usize,
+        input: usize,
+        count: usize,
+        commands: std::collections::BTreeMap<String, usize>,
+        cache_hits: usize,
+    }
+
+    fn categorize(cmd: Option<&str>, cache_hit: bool) -> SavingsCategory {
+        if cache_hit {
+            return SavingsCategory::PipelineSavings;
+        }
+        let raw = match cmd {
+            None => return SavingsCategory::PipelineSavings,
+            Some(s) => s,
+        };
+        let first_token = raw.split_whitespace().next().unwrap_or(raw);
+        match first_token {
+            "(read)" | "(read-level)" | "(glob)" | "(grep-tool)" | "(pipeline)" => {
+                return SavingsCategory::PipelineSavings;
+            }
+            _ => {}
+        }
+        let normalized = normalize_cmd_key(Some(raw));
+        let cmd_name = normalized.split_whitespace().next().unwrap_or(&normalized);
+        match cmd_name {
+            "(pipeline)" => SavingsCategory::PipelineSavings,
+            "find" | "ls" | "tree" => SavingsCategory::NoiseReduction,
+            "cargo" | "go" | "npm" | "yarn" | "pnpm" | "make" | "gmake"
+            | "mvn" | "gradle" | "pytest" | "jest" | "vitest" | "rspec"
+            | "tsc" | "ruff" | "mypy" | "rubocop" | "eslint" | "biome"
+            | "playwright" | "nx" | "turbo" | "uv" | "pip" | "rake"
+            | "ember" | "next" | "webpack" | "vite" | "stylelint" | "prettier" => {
+                SavingsCategory::BuildFiltering
+            }
+            _ => SavingsCategory::CommandCompression,
+        }
+    }
+
+    fn format_save_label(r: &Analytics) -> String {
+        let cmd = normalize_cmd_key(r.command.as_deref());
+        match r.subcommand.as_deref() {
+            Some(sub) if !sub.is_empty() => {
+                let sub_display = if sub.len() > 30 {
+                    format!("\u{2026}{}", &sub[sub.len() - 28..])
+                } else {
+                    sub.to_string()
+                };
+                format!("{} {}", cmd, sub_display)
+            }
+            _ => cmd,
+        }
+    }
+
+    fn aggregate_by_category(
+        records: &[Analytics],
+        cutoff: u64,
+    ) -> (BTreeMap<SavingsCategory, CategoryStats>, Vec<usize>) {
+        let windowed_indices: Vec<usize> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.timestamp_secs > 0 && r.timestamp_secs >= cutoff)
+            .map(|(i, _)| i)
+            .collect();
+
+        let mut by_category: BTreeMap<SavingsCategory, CategoryStats> = BTreeMap::new();
+        for &i in &windowed_indices {
+            let r = &records[i];
+            let cat = categorize(r.command.as_deref(), r.cache_hit);
+            let stats = by_category.entry(cat).or_default();
+            stats.saved += r.tokens_saved();
+            stats.input += r.input_tokens;
+            stats.count += 1;
+            let cmd_key = normalize_cmd_key(r.command.as_deref());
+            *stats.commands.entry(cmd_key).or_default() += 1;
+            if r.cache_hit {
+                stats.cache_hits += 1;
+            }
+        }
+
+        let mut sorted = windowed_indices;
+        sorted.sort_by(|&a, &b| records[b].tokens_saved().cmp(&records[a].tokens_saved()));
+
+        (by_category, sorted)
+    }
 
     fn make_record(
         cmd: Option<&str>,
