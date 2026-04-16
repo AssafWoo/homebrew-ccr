@@ -419,6 +419,16 @@ An opt-in feature that tells the agent which files are relevant for the current 
 
 ---
 
+## Why PandaFilter? Why Panda?
+
+AI coding sessions are expensive — not because of what you ask, but because of what the agent reads back. Every `cargo build` or `npm install` dumps thousands of tokens of noise into the context window. I built PandaFilter to strip that out automatically.
+
+The name comes from how a panda eats: it consumes enormous amounts of raw material and extracts only what it needs.
+
+— [Assaf Petronio](https://x.com/AssafPetronio) · [github.com/AssafWoo](https://github.com/AssafWoo)
+
+---
+
 ## Contributing
 
 Open an issue or PR on [GitHub](https://github.com/AssafWoo/PandaFilter). To add a handler: implement the `Handler` trait and register it in `ccr/src/handlers/mod.rs` — see `git.rs` as a template.
@@ -428,13 +438,3 @@ Open an issue or PR on [GitHub](https://github.com/AssafWoo/PandaFilter). To add
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-## Why PandaFilter? Why Panda?
-
-AI coding sessions are expensive — not because of what you ask, but because of what the agent reads back. Every `cargo build` or `npm install` dumps thousands of tokens of noise into the context window. I built PandaFilter to strip that out automatically.
-
-The name comes from how a panda eats: it consumes enormous amounts of raw material and extracts only what it needs.
-
-— [Assaf Petronio](https://x.com/AssafPetronio) · [github.com/AssafWoo](https://github.com/AssafWoo)
