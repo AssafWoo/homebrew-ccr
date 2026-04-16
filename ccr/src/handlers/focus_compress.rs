@@ -565,3 +565,341 @@ fn compute_old_method_tokens(content: &str, total_lines: usize) -> usize {
         panda_core::tokens::count_tokens(&head)
     }
 }
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── split_into_sections: Rust / brace-based ───────────────────────────────
+
+    #[test]
+    fn test_rust_use_imports_grouped() {
+        let src = "use std::fs;\nuse std::path::Path;\n\nfn foo() {}\n";
+        let sections = split_into_sections(src, "rs");
+        // imports should be one section, function another
+        assert!(sections.iter().any(|s| s.kind == SectionKind::Import), "expected an Import section");
+        assert!(sections.iter().any(|s| s.kind == SectionKind::Function), "expected a Function section");
+    }
+
+    #[test]
+    fn test_rust_struct_classified_as_typedef() {
+        let src = "struct Foo {\n    x: i32,\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::TypeDef);
+    }
+
+    #[test]
+    fn test_rust_fn_classified_as_function() {
+        let src = "fn bar() {\n    let x = 1;\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::Function);
+    }
+
+    #[test]
+    fn test_rust_pub_fn_classified_as_function() {
+        let src = "pub fn hello() {\n    println!(\"hi\");\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::Function);
+    }
+
+    #[test]
+    fn test_rust_enum_classified_as_typedef() {
+        let src = "enum Color {\n    Red,\n    Green,\n    Blue,\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::TypeDef);
+    }
+
+    #[test]
+    fn test_rust_two_functions_split_into_two_sections() {
+        let src = "fn foo() {\n    let x = 1;\n}\n\nfn bar() {\n    let y = 2;\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 2, "each function should be its own section");
+        assert!(sections.iter().all(|s| s.kind == SectionKind::Function));
+    }
+
+    #[test]
+    fn test_rust_adjacent_functions_no_blank_line() {
+        // No blank line between functions — depth returning to 0 should split them
+        let src = "fn foo() {\n    1\n}\nfn bar() {\n    2\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 2, "adjacent functions should still be separate sections");
+    }
+
+    #[test]
+    fn test_rust_section_line_ranges_are_correct() {
+        let src = "use std::fs;\n\nfn foo() {\n    let x = 1;\n}\n";
+        let sections = split_into_sections(src, "rs");
+        // Import section should start at line 0
+        let import = sections.iter().find(|s| s.kind == SectionKind::Import).unwrap();
+        assert_eq!(import.start_line, 0);
+        // Function section should start somewhere after the import
+        let func = sections.iter().find(|s| s.kind == SectionKind::Function).unwrap();
+        assert!(func.start_line > 0);
+        // end_line should be exclusive and > start_line
+        assert!(func.end_line > func.start_line);
+    }
+
+    #[test]
+    fn test_rust_header_lines_detected() {
+        // Single-line function header: `fn foo() {`
+        let src = "fn foo() {\n    let x = 1;\n    let y = 2;\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        // Header is the `fn foo() {` line = 1 line
+        assert_eq!(sections[0].header_lines, 1);
+    }
+
+    #[test]
+    fn test_rust_multiline_header_lines() {
+        // Multi-line signature before opening brace
+        let src = "fn complex(\n    x: i32,\n    y: i32,\n) -> i32 {\n    x + y\n}\n";
+        let sections = split_into_sections(src, "rs");
+        assert_eq!(sections.len(), 1);
+        // Header includes all lines up to and including the `{` line = 4 lines
+        assert_eq!(sections[0].header_lines, 4);
+    }
+
+    #[test]
+    fn test_rust_impl_block_classified_as_function() {
+        let src = "impl Foo {\n    fn method(&self) -> i32 {\n        42\n    }\n}\n";
+        let sections = split_into_sections(src, "rs");
+        // The whole impl block is one section
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::Function);
+    }
+
+    #[test]
+    fn test_rust_const_classified_as_toplevel() {
+        let src = "const MAX: usize = 100;\n\nfn foo() {}\n";
+        let sections = split_into_sections(src, "rs");
+        let toplevel = sections.iter().find(|s| s.kind == SectionKind::TopLevel);
+        assert!(toplevel.is_some(), "const should be TopLevel");
+    }
+
+    // ── split_into_sections: Python ───────────────────────────────────────────
+
+    #[test]
+    fn test_python_imports_and_function() {
+        let src = "import os\nfrom pathlib import Path\n\ndef foo():\n    pass\n";
+        let sections = split_into_sections(src, "py");
+        assert!(sections.iter().any(|s| s.kind == SectionKind::Import));
+        assert!(sections.iter().any(|s| s.kind == SectionKind::Function));
+    }
+
+    #[test]
+    fn test_python_class_classified_as_function() {
+        let src = "class Foo:\n    def __init__(self):\n        pass\n";
+        let sections = split_into_sections(src, "py");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].kind, SectionKind::Function);
+    }
+
+    // ── split_into_sections: unknown ext fallback ─────────────────────────────
+
+    #[test]
+    fn test_unknown_ext_paragraph_split() {
+        let src = "line one\nline two\n\n\nline three\nline four\n";
+        let sections = split_into_sections(src, "txt");
+        assert!(sections.len() >= 1);
+        assert!(sections.iter().all(|s| s.kind == SectionKind::TopLevel));
+    }
+
+    // ── score_and_compress ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_import_sections_always_preserved() {
+        // Build synthetic sections
+        let import_section = FileSection {
+            start_line: 0,
+            end_line: 2,
+            kind: SectionKind::Import,
+            text: "use std::fs;\nuse std::path::Path;".to_string(),
+            header_lines: 0,
+        };
+        let fn_section = FileSection {
+            start_line: 3,
+            end_line: 10,
+            kind: SectionKind::Function,
+            text: "fn totally_unrelated_noise() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n}".to_string(),
+            header_lines: 1,
+        };
+
+        let sections = vec![import_section, fn_section];
+
+        // Prompt embedding pointing strongly away from std::fs / imports
+        // Use a zero vector as prompt — cosine sim will be 0 for everything
+        let prompt_emb = vec![0.0f32; 384];
+        let result = score_and_compress(&sections, &prompt_emb, &[]).unwrap();
+
+        // Import section must always be preserved
+        let import_detail = result.section_details.iter().find(|d| d.kind == SectionKind::Import).unwrap();
+        assert!(import_detail.preserved, "Import section must always be preserved");
+    }
+
+    #[test]
+    fn test_typedef_sections_always_preserved() {
+        let typedef_section = FileSection {
+            start_line: 0,
+            end_line: 3,
+            kind: SectionKind::TypeDef,
+            text: "struct Config {\n    timeout: u64,\n}".to_string(),
+            header_lines: 1,
+        };
+        let fn_section = FileSection {
+            start_line: 5,
+            end_line: 10,
+            kind: SectionKind::Function,
+            text: "fn do_something() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}".to_string(),
+            header_lines: 1,
+        };
+        let sections = vec![typedef_section, fn_section];
+        let prompt_emb = vec![0.0f32; 384];
+        let result = score_and_compress(&sections, &prompt_emb, &[]).unwrap();
+
+        let td = result.section_details.iter().find(|d| d.kind == SectionKind::TypeDef).unwrap();
+        assert!(td.preserved, "TypeDef section must always be preserved");
+    }
+
+    #[test]
+    fn test_at_least_half_sections_preserved() {
+        // Build 4 function sections — minimum 50% (2) must be preserved
+        let sections: Vec<FileSection> = (0..4).map(|i| FileSection {
+            start_line: i * 5,
+            end_line: i * 5 + 4,
+            kind: SectionKind::Function,
+            text: format!("fn func{}() {{\n    let x = {};\n    let y = {};\n}}", i, i, i),
+            header_lines: 1,
+        }).collect();
+
+        let prompt_emb = vec![0.0f32; 384]; // all scores = 0 → threshold = 0
+        let result = score_and_compress(&sections, &prompt_emb, &[]).unwrap();
+
+        assert!(result.sections_preserved >= 2, "at least 50% must be preserved, got {}", result.sections_preserved);
+        assert_eq!(result.sections_total, 4);
+    }
+
+    #[test]
+    fn test_compressed_section_contains_zoom_id() {
+        panda_core::zoom::enable();
+        let fn_section = FileSection {
+            start_line: 0,
+            end_line: 6,
+            kind: SectionKind::Function,
+            text: "fn unused_func() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n}".to_string(),
+            header_lines: 1,
+        };
+        let import_section = FileSection {
+            start_line: 10,
+            end_line: 11,
+            kind: SectionKind::Import,
+            text: "use std::fs;".to_string(),
+            header_lines: 0,
+        };
+        // Two sections: one will be preserved (import), one may be compressed
+        let sections = vec![fn_section, import_section];
+        let prompt_emb = vec![0.0f32; 384];
+        let result = score_and_compress(&sections, &prompt_emb, &[]).unwrap();
+
+        // If any section was compressed, its output text must contain "panda expand ZI_"
+        if result.sections_compressed > 0 {
+            assert!(
+                result.output.contains("panda expand ZI_"),
+                "compressed section output must contain zoom ID, got: {}",
+                &result.output[..result.output.len().min(200)]
+            );
+        }
+    }
+
+    #[test]
+    fn test_edit_preserve_ranges_force_preserve() {
+        // Section at lines 5-15 overlaps with preserve_range (10, 20)
+        let fn_section = FileSection {
+            start_line: 5,
+            end_line: 15,
+            kind: SectionKind::Function,
+            text: "fn recently_edited() {\n    let x = 1;\n    let y = 2;\n    let z = 3;\n    let w = 4;\n    let v = 5;\n    let u = 6;\n    let t = 7;\n    let s = 8;\n}".to_string(),
+            header_lines: 1,
+        };
+        // Another function with no overlap
+        let fn_section2 = FileSection {
+            start_line: 20,
+            end_line: 30,
+            kind: SectionKind::Function,
+            text: "fn other_func() {\n    let a = 1;\n    let b = 2;\n    let c = 3;\n    let d = 4;\n    let e = 5;\n    let f = 6;\n    let g = 7;\n    let h = 8;\n}".to_string(),
+            header_lines: 1,
+        };
+        let sections = vec![fn_section, fn_section2];
+        let preserve_ranges = vec![(10usize, 20usize)]; // overlaps fn_section
+        let prompt_emb = vec![0.0f32; 384];
+
+        let result = score_and_compress(&sections, &prompt_emb, &preserve_ranges).unwrap();
+
+        // The section overlapping the edit range must be preserved
+        let edit_section = result.section_details.iter().find(|d| d.start_line == 5).unwrap();
+        assert!(edit_section.preserved, "section overlapping edit range must be preserved");
+    }
+
+    // ── classify_kind ────────────────────────────────────────────────────────
+
+    #[test]
+    fn test_classify_kind_pub_fn() {
+        assert_eq!(classify_kind("pub fn foo() {"), SectionKind::Function);
+    }
+
+    #[test]
+    fn test_classify_kind_use() {
+        assert_eq!(classify_kind("use std::fs;"), SectionKind::Import);
+    }
+
+    #[test]
+    fn test_classify_kind_struct() {
+        assert_eq!(classify_kind("struct Foo {"), SectionKind::TypeDef);
+    }
+
+    #[test]
+    fn test_classify_kind_enum() {
+        assert_eq!(classify_kind("enum Color {"), SectionKind::TypeDef);
+    }
+
+    #[test]
+    fn test_classify_kind_impl() {
+        assert_eq!(classify_kind("impl Foo {"), SectionKind::Function);
+    }
+
+    #[test]
+    fn test_classify_kind_const() {
+        assert_eq!(classify_kind("const MAX: usize = 100;"), SectionKind::TopLevel);
+    }
+
+    #[test]
+    fn test_classify_kind_pub_struct() {
+        assert_eq!(classify_kind("pub struct Bar {"), SectionKind::TypeDef);
+    }
+
+    // ── count_header_lines_brace ─────────────────────────────────────────────
+
+    #[test]
+    fn test_header_lines_single_line() {
+        let lines = ["fn foo() {", "    let x = 1;", "}"];
+        assert_eq!(count_header_lines_brace(&lines), 1);
+    }
+
+    #[test]
+    fn test_header_lines_multiline_sig() {
+        let lines = ["fn foo(", "    x: i32,", ") -> i32 {", "    x", "}"];
+        // Opening { is on line index 2, so header_lines = 3
+        assert_eq!(count_header_lines_brace(&lines), 3);
+    }
+
+    #[test]
+    fn test_header_lines_no_brace_returns_zero() {
+        let lines = ["use std::fs;", "use std::path::Path;"];
+        assert_eq!(count_header_lines_brace(&lines), 0);
+    }
+}
