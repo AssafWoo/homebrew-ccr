@@ -92,25 +92,18 @@ fn webfetch_long_page_produces_compressed_output() {
 
     assert!(out.status.success());
 
-    // If the hook produced output it must be valid JSON.
-    // Byte length may be >= original because collapse markers add bytes while reducing
-    // information density. Verify the hook ran and the output is either shorter OR
-    // contains an expandable collapse marker ("panda expand ZI_N").
+    // Compressed WebFetch output must include the PandaFilter notice so Claude
+    // knows it's reading a summary and has concrete recovery instructions.
     if !out.stdout.is_empty() {
         let output = parse_hook_output(&out.stdout)
             .expect("stdout must be valid {\"output\":\"...\"} JSON");
-        let compressed = output.len() < original_len;
-        // Collapsed/summarized sections produce zoom markers (e.g. "expand ZI_N") so
-        // Claude can always recover the full content. Check for the ZI_ pattern which
-        // is common to all zoom expand formats ("panda expand ZI_N", "ccr expand ZI_N").
-        let has_zoom_marker = output.contains("ZI_") || output.contains("expand ZI");
         assert!(
-            compressed || has_zoom_marker,
-            "WebFetch must either shorten content or add zoom markers (expand ZI_N), \
-             got {} chars from {} chars original.\nOutput:\n{}",
-            output.len(),
-            original_len,
-            &output[..output.len().min(400)]
+            output.contains("PandaFilter: WebFetch compressed"),
+            "output must include the PandaFilter compression notice"
+        );
+        assert!(
+            output.contains("re-fetch"),
+            "notice must include a re-fetch instruction"
         );
     }
 }
@@ -271,8 +264,12 @@ fn webfetch_prose_page_compresses_without_losing_structure() {
 
     assert!(out.status.success());
 
-    // If compression fires, every omitted chunk must be recoverable (has ZI_ zoom marker).
     if let Some(output) = parse_hook_output(&out.stdout) {
+        // Must include the PandaFilter notice so Claude knows it's reading a summary.
+        assert!(
+            output.contains("PandaFilter: WebFetch compressed"),
+            "prose compression must include the PandaFilter notice"
+        );
         // Any omission marker must include a zoom ID — no dead ends.
         let collapsed_without_id = output.contains("[... ") && !output.contains("ZI_");
         assert!(

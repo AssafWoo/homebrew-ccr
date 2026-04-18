@@ -1666,6 +1666,49 @@ fn process_webfetch(hook_input: HookInput) -> Result<Option<String>> {
 
     let in_tok = panda_core::tokens::count_tokens(&output_text);
     let out_tok = panda_core::tokens::count_tokens(&final_output);
+
+    // Build the compression notice so Claude knows it's reading a summary
+    // and has concrete instructions to recover any part of the full content.
+    let saved_pct = if in_tok > 0 {
+        100u64.saturating_sub(out_tok.min(in_tok) as u64 * 100 / in_tok as u64)
+    } else {
+        0
+    };
+    // Collect zoom IDs that appear in the output so Claude knows which blocks exist.
+    let zoom_ids: Vec<&str> = {
+        let mut ids = Vec::new();
+        let mut rest = final_output.as_str();
+        while let Some(pos) = rest.find("ZI_") {
+            let after = &rest[pos..];
+            let end = after
+                .find(|c: char| !c.is_alphanumeric() && c != '_')
+                .unwrap_or(after.len());
+            ids.push(&after[..end]);
+            rest = &after[end..];
+        }
+        ids.dedup();
+        ids
+    };
+
+    let notice = if zoom_ids.is_empty() {
+        format!(
+            "[PandaFilter: WebFetch compressed ~{}% — content summarised. \
+             If you need more detail, re-fetch the URL: {}]",
+            saved_pct, url
+        )
+    } else {
+        format!(
+            "[PandaFilter: WebFetch compressed ~{}% — content summarised. \
+             Collapsed sections: {}. \
+             Run `panda expand <ID>` for any section, or re-fetch {} for the full page.]",
+            saved_pct,
+            zoom_ids.join(", "),
+            url
+        )
+    };
+
+    let output_with_notice = format!("{}\n\n{}", notice, final_output);
+
     crate::util::append_analytics(&panda_core::analytics::Analytics::new(
         in_tok,
         out_tok,
@@ -1674,7 +1717,7 @@ fn process_webfetch(hook_input: HookInput) -> Result<Option<String>> {
         None,
     ));
 
-    Ok(Some(serde_json::to_string(&HookOutput { output: final_output })?))
+    Ok(Some(serde_json::to_string(&HookOutput { output: output_with_notice })?))
 }
 
 /// Returns true for content that must not be compressed — BERT summarization
