@@ -351,6 +351,7 @@ function PageNav({ page, total, perPage, onPage }: {
 // ─── Doc sections ─────────────────────────────────────────────────────────────
 
 function OverviewDiagram() {
+  const isMobile = useIsMobile()
   const W = 780, H = 212
   const c = T.cyan, red = T.red, b = T.border, m = T.muted, s = T.sub
   const code = '#0d1117', sb = T.sidebar
@@ -370,6 +371,73 @@ function OverviewDiagram() {
     { t: '   |     ^^^^^ expected &str',    col: red },
     { t: '[1 error — build failed]',         col: s   },
   ]
+
+  if (isMobile) {
+    return (
+      <div style={{
+        background: T.card, border: `1px solid ${T.border}`,
+        borderRadius: 12, padding: '20px 16px', marginBottom: 28,
+      }}>
+        <svg viewBox="0 0 300 432" style={{ width: '100%', display: 'block' }}>
+          <defs>
+            <marker id="ov-m-c" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill={c}/>
+            </marker>
+            <marker id="ov-m-g" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+              <polygon points="0 0, 8 3, 0 6" fill={m}/>
+            </marker>
+            <filter id="ov-m-glow" x="-60%" y="-60%" width="220%" height="220%">
+              <feGaussianBlur in="SourceGraphic" stdDeviation="7" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <linearGradient id="ov-m-lg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#111827"/><stop offset="100%" stopColor={code}/>
+            </linearGradient>
+            <linearGradient id="ov-m-rg" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#071a12"/><stop offset="100%" stopColor={code}/>
+            </linearGradient>
+          </defs>
+
+          {/* TOP BOX — tool output / noise */}
+          <rect x="30" y="8" width="240" height="130" rx="10" fill="url(#ov-m-lg)" stroke={b} strokeWidth="1.5"/>
+          <rect x="30" y="8" width="240" height="28" rx="10" fill={sb}/>
+          <rect x="30" y="22" width="240" height="14" fill={sb}/>
+          <text x="150" y="26" textAnchor="middle" fill={s} fontSize="10" fontWeight="700" fontFamily="Inter,sans-serif" letterSpacing="0.06em">TOOL OUTPUT</text>
+          {noiseLines.map((ln, i) => (
+            <text key={i} x="38" y={50 + i * 13} fill="#4a6080" fontSize="8.5" fontFamily="JetBrains Mono,monospace">{ln}</text>
+          ))}
+          <rect x="86" y="118" width="128" height="13" rx="4" fill="rgba(239,68,68,0.1)" stroke="rgba(239,68,68,0.22)" strokeWidth="1"/>
+          <text x="150" y="127" textAnchor="middle" fill={red} fontSize="8.5" fontWeight="700" fontFamily="Inter,sans-serif">1,923 tokens</text>
+
+          {/* Arrow down: noise → logo */}
+          <path d="M 150 140 L 150 174" stroke={m} strokeWidth="1.5" strokeDasharray="5 3" fill="none" markerEnd="url(#ov-m-g)"/>
+          <text x="162" y="159" fill={m} fontSize="8.5" fontFamily="Inter,sans-serif">raw output</text>
+
+          {/* LOGO HUB */}
+          <circle cx="150" cy="200" r="52" fill="rgba(34,211,238,0.04)" stroke="rgba(34,211,238,0.13)" strokeWidth="1" filter="url(#ov-m-glow)"/>
+          <circle cx="150" cy="200" r="42" fill={sb} stroke={c} strokeWidth="1.5"/>
+          <image href={`${import.meta.env.BASE_URL}logo.png`} x="122" y="172" width="56" height="56"/>
+          <text x="150" y="252" textAnchor="middle" fill={s} fontSize="10" fontWeight="600" fontFamily="Inter,sans-serif">PandaFilter</text>
+          <text x="150" y="264" textAnchor="middle" fill={m} fontSize="8" fontFamily="Inter,sans-serif">on-device · all local</text>
+
+          {/* Arrow down: logo → clean */}
+          <path d="M 150 270 L 150 296" stroke={c} strokeWidth="2" fill="none" markerEnd="url(#ov-m-c)"/>
+          <text x="162" y="285" fill={c} fontSize="8.5" fontFamily="Inter,sans-serif" opacity="0.85">filtered</text>
+
+          {/* BOTTOM BOX — clean / agent sees */}
+          <rect x="30" y="300" width="240" height="130" rx="10" fill="url(#ov-m-rg)" stroke={c} strokeWidth="1.5"/>
+          <rect x="30" y="300" width="240" height="28" rx="10" fill={sb}/>
+          <rect x="30" y="314" width="240" height="14" fill={sb}/>
+          <text x="150" y="318" textAnchor="middle" fill={c} fontSize="10" fontWeight="700" fontFamily="Inter,sans-serif" letterSpacing="0.06em">AI AGENT SEES</text>
+          {cleanLines.map(({ t, col }, i) => (
+            <text key={i} x="38" y={342 + i * 13} fill={col} fontSize="8.5" fontFamily="JetBrains Mono,monospace">{t}</text>
+          ))}
+          <rect x="71" y="410" width="158" height="13" rx="4" fill="rgba(34,211,238,0.08)" stroke="rgba(34,211,238,0.22)" strokeWidth="1"/>
+          <text x="150" y="419" textAnchor="middle" fill={c} fontSize="8.5" fontWeight="700" fontFamily="Inter,sans-serif">93 tokens · −95%</text>
+        </svg>
+      </div>
+    )
+  }
 
   return (
     <div style={{
