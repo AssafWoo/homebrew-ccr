@@ -6,6 +6,7 @@ pub mod cline;
 pub mod codex;
 pub mod copilot;
 pub mod gemini;
+pub mod openclaw;
 pub mod windsurf;
 
 /// Common interface for all agent hook installers.
@@ -26,6 +27,7 @@ pub fn get_installer(agent: &str) -> Option<Box<dyn AgentInstaller>> {
         "cline"               => Some(Box::new(cline::ClineInstaller)),
         "codex"               => Some(Box::new(codex::CodexInstaller)),
         "windsurf"            => Some(Box::new(windsurf::WindsurfInstaller)),
+        "openclaw"            => Some(Box::new(openclaw::OpenClawInstaller)),
         _                     => None,
     }
 }

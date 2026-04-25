@@ -526,7 +526,7 @@ function SectionOverview() {
         <h1 style={{ fontSize: 28, fontWeight: 800, color: T.text, marginBottom: 8, lineHeight: 1.2 }}>
           PandaFilter
         </h1>
-        <p style={{ fontSize: 13, fontWeight: 600, color: T.cyan, marginBottom: 12, letterSpacing: '0.03em' }}>
+        <p style={{ fontSize: 16, fontWeight: 600, color: T.cyan, marginBottom: 12, letterSpacing: '0.02em' }}>
           The context intelligence layer for AI coding agents
         </p>
         <p style={{ fontSize: 16, color: T.sub, lineHeight: 1.7, marginBottom: 0, maxWidth: 640 }}>
@@ -542,7 +542,7 @@ function SectionOverview() {
         { value: '82%',   label: 'token reduction across 47 handlers', color: T.cyan   },
         { value: '85.6%', label: 'file retrieval success rate',        color: T.cyan   },
         { value: '59',    label: 'command handlers built-in',          color: T.violet },
-        { value: '7',     label: 'AI agents supported',                color: T.emerald },
+        { value: '8',     label: 'AI agents supported',                color: T.emerald },
       ]} />
 
       <P>
@@ -618,6 +618,7 @@ panda init --agent gemini           # Gemini CLI
 panda init --agent codex            # Codex (CLI + VS Code extension)
 panda init --agent windsurf         # Windsurf
 panda init --agent cline            # Cline
+panda init --agent openclaw         # OpenClaw
 panda init --agent copilot          # VS Code Copilot
       `}</CodeBlock>
 
@@ -757,6 +758,15 @@ function SectionAgents() {
       script: '~/.codeium/windsurf/panda-rewrite.sh',
       desc: 'pre_run_command and post_run_command hooks in Windsurf\'s Cascade agent system.',
       logo: '◇',
+    },
+    {
+      name: 'OpenClaw',
+      cmd: 'panda init --agent openclaw',
+      color: '#f59e0b',
+      config: '~/.openclaw/openclaw.json',
+      script: '~/.openclaw/hooks/panda-rewrite.sh',
+      desc: 'preToolUse and postToolUse hooks via OpenClaw\'s native hook configuration.',
+      logo: '◉',
     },
   ]
 
@@ -1570,6 +1580,12 @@ function SectionV130() {
             desc: 'panda gain now shows a multi-signal quality grade (S/A/B/C/D/F) based on compression ratio, cache hit rate, and delta re-read rate. Full per-signal breakdown with actionable tips in panda gain --insight.',
             config: null,
           },
+          {
+            tag: 'OpenClaw support',
+            color: '#f59e0b',
+            desc: 'PandaFilter now integrates with OpenClaw via preToolUse and postToolUse hooks in ~/.openclaw/openclaw.json. Install with panda init --agent openclaw, or detected automatically by panda init --agent all.',
+            config: null,
+          },
         ].map(({ tag, color, desc, config }) => (
           <div key={tag} style={{
             background: T.card, border: `1px solid ${T.border}`, borderRadius: 10,
@@ -2100,7 +2116,7 @@ const SEARCH_INDEX = [
   { id: 'overview',       section: 'Getting Started', title: 'Overview',           keywords: 'pandafilter what is introduction token bill noise context window agent' },
   { id: 'install',        section: 'Getting Started', title: 'Install',            keywords: 'brew homebrew curl linux install setup macos' },
   { id: 'quick-start',    section: 'Getting Started', title: 'Quick start',        keywords: 'panda init cursor gemini cline copilot codex windsurf wire agent doctor all' },
-  { id: 'agents',          section: 'How It Works',    title: 'Supported agents',   keywords: 'agents claude cursor gemini cline copilot vscode codex windsurf codeium openai init hook pretooluse posttooluse usersubmit supported all detect auto' },
+  { id: 'agents',          section: 'How It Works',    title: 'Supported agents',   keywords: 'agents claude cursor gemini cline copilot vscode codex windsurf codeium openai openclaw init hook pretooluse posttooluse usersubmit supported all detect auto' },
   { id: 'pipeline',       section: 'How It Works',    title: 'Filtering pipeline', keywords: 'pipeline ansi whitespace regex ndjson summarize bert cap stage steps 200k 50k' },
   { id: 'bert',           section: 'How It Works',    title: 'BERT engine',        keywords: 'bert model embedding miniLM 384 dimensions anomaly cosine similarity noise useful entropy adaptive budget weights' },
   { id: 'handlers',       section: 'How It Works',    title: 'Handlers',           keywords: 'handlers cargo git pytest jest npm docker kubectl terraform eslint tsc 59 routing' },

@@ -11,6 +11,10 @@
 - **Expert Collapse Detection**: Tracks per-expert activation counts. When one expert exceeds 70% share, a noise bonus prevents collapse. Enable with `router_exploration_noise = true`.
 - **Quality Score**: `panda gain` now shows a multi-signal quality grade (S/A/B/C/D/F) based on compression ratio, cache hit rate, and delta re-read rate. Full breakdown in `panda gain --insight`.
 
+### New Agent
+
+- **OpenClaw support**: `panda init --agent openclaw` installs pre/post tool-use hooks into `~/.openclaw/openclaw.json`. Detected automatically by `panda init --agent all`.
+
 ### Improvements
 
 - `panda gain --insight` now includes a Quality Score section with per-signal bars and actionable tips.

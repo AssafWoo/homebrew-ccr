@@ -45,7 +45,7 @@ Then wire it in — one command installs for every AI agent you have:
 panda init --agent all
 ```
 
-Auto-detects Claude Code, Cursor, Gemini CLI, Codex, Windsurf, Cline, and VS Code Copilot. Skips anything that isn't installed. Or target one specifically:
+Auto-detects Claude Code, Cursor, Gemini CLI, Codex, Windsurf, Cline, OpenClaw, and VS Code Copilot. Skips anything that isn't installed. Or target one specifically:
 
 ```bash
 panda init                          # Claude Code (default)
@@ -54,6 +54,7 @@ panda init --agent gemini           # Gemini CLI
 panda init --agent codex            # Codex (CLI + VS Code extension)
 panda init --agent windsurf         # Windsurf
 panda init --agent cline            # Cline
+panda init --agent openclaw         # OpenClaw
 panda init --agent copilot          # VS Code Copilot
 ```
 
@@ -165,6 +166,7 @@ Numbers from `ccr/tests/handler_benchmarks.rs`. Run `panda gain` to see your own
 | Context compaction | 60–70% conversation lost | Session digest preserved and restored |
 | Filtering strategy | Fixed pipeline always | Adaptive router — right expert per content type |
 | Quality visibility | Token savings only | Multi-signal quality score in `panda gain` |
+| Agent support | 7 agents | 8 agents — OpenClaw added |
 
 ---
 
