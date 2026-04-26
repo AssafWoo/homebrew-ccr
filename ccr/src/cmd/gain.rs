@@ -178,7 +178,7 @@ fn print_summary(records: &[Analytics], breakdown: bool, days: u32) {
         format!("{}{}", "█".repeat(filled), "░".repeat(empty))
     };
 
-    println!("{}", "PandaFilter Token Savings".if_supports_color(Stdout, |t| t.bold()));
+    println!("{}", "PandaFilter Token Savings — All Time".if_supports_color(Stdout, |t| t.bold()));
     println!("{}", "═".repeat(49).if_supports_color(Stdout, |t| t.dimmed()));
     let green_bold = Style::new().bold().green();
     let yellow_bold = Style::new().bold().yellow();
@@ -782,9 +782,29 @@ fn print_insight(records: &[Analytics], days: u32) {
     );
     println!("{}", "═".repeat(58).if_supports_color(Stdout, |t| t.dimmed()));
 
+    // ── All-time totals (always shown, even if window is empty) ──────────────
+    let all_input: usize = records.iter().map(|r| r.input_tokens).sum();
+    let all_output: usize = records.iter().map(|r| r.output_tokens).sum();
+    let all_saved = all_input.saturating_sub(all_output);
+    let all_pct = savings_pct(all_input, all_output);
+    let (all_cost, _) = blended_cost(&records.iter().collect::<Vec<_>>());
+
+    let green_bold = Style::new().green().bold();
+    let yellow_bold = Style::new().yellow().bold();
+
+    println!();
+    println!(
+        "  {}  {} runs  ·  {} tokens saved  ({})  ·  {}",
+        "All time:".if_supports_color(Stdout, |t| t.bold()),
+        fmt_number(records.len()).if_supports_color(Stdout, |t| t.bold()),
+        fmt_tokens(all_saved).if_supports_color(Stdout, |t| t.style(green_bold)),
+        format!("{:.1}%", all_pct).if_supports_color(Stdout, |t| t.green()),
+        format!("~{}", fmt_cost(all_cost)).if_supports_color(Stdout, |t| t.style(yellow_bold)),
+    );
+
     if windowed.is_empty() {
         println!();
-        println!("  No token savings recorded in this period.");
+        println!("  No token savings recorded in the last {} days.", days);
         return;
     }
 
@@ -795,13 +815,11 @@ fn print_insight(records: &[Analytics], days: u32) {
     let (cost_saved, _) = blended_cost(&windowed);
     let cache_hits: usize = windowed.iter().filter(|r| r.cache_hit).count();
 
-    let green_bold = Style::new().green().bold();
-    let yellow_bold = Style::new().yellow().bold();
-
-    // ── Headline ─────────────────────────────────────────────────────────────
+    // ── Windowed headline ────────────────────────────────────────────────────
     println!();
     println!(
-        "  {} runs  ·  {} tokens saved  ·  {}",
+        "  {}  {} runs  ·  {} tokens saved  ·  {}",
+        format!("Last {} days:", days).if_supports_color(Stdout, |t| t.bold()),
         fmt_number(total_runs).if_supports_color(Stdout, |t| t.bold()),
         fmt_tokens(total_saved).if_supports_color(Stdout, |t| t.style(green_bold)),
         format!("~{}", fmt_cost(cost_saved)).if_supports_color(Stdout, |t| t.style(yellow_bold)),
@@ -1288,63 +1306,180 @@ fn print_quality_insight(days: u32) {
     };
 
     println!(
-        "  {} — {} ({:.0}/100)",
+        "  {} — {} ({:.0}/100)  ·  based on last {} days",
         "Quality Score".if_supports_color(Stdout, |t| t.bold()),
         grade_colored,
         score,
+        days,
+    );
+    println!(
+        "  {}",
+        "How well PandaFilter is working. Each signal below shows one aspect of quality."
+            .if_supports_color(Stdout, |t| t.dimmed()),
     );
 
-    let bar = |v: f64| -> String {
+    let bar = |v: f64, color: u8| -> String {
         let filled = ((v / 100.0) * 16.0) as usize;
         let empty = 16usize.saturating_sub(filled);
-        format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+        let bar_str = format!("{}{}", "█".repeat(filled), "░".repeat(empty));
+        // color: 0 = green, 1 = cyan, 2 = yellow, 3 = plain
+        match color {
+            0 => bar_str.if_supports_color(Stdout, |t| t.green()).to_string(),
+            1 => bar_str.if_supports_color(Stdout, |t| t.cyan()).to_string(),
+            2 => bar_str.if_supports_color(Stdout, |t| t.yellow()).to_string(),
+            _ => bar_str,
+        }
     };
 
     let compression_signal = (signals.avg_savings_pct / 90.0 * 100.0).min(100.0);
     let cache_signal = signals.cache_hit_rate * 100.0;
     let delta_signal = signals.delta_read_rate * 100.0;
+    let activity_signal = (signals.total_records as f64 / 30.0 * 100.0).min(100.0);
+    let consistency_signal = if signals.avg_savings_pct >= 30.0 { 100.0_f64 }
+        else { signals.avg_savings_pct / 30.0 * 100.0 };
 
+    // ── ① Token savings ────────────────────────────────────────────────────────
+    let compression_color = if compression_signal >= 70.0 { 0 } else if compression_signal >= 40.0 { 2 } else { 3 };
+    println!();
     println!(
-        "    Token savings   {:.0}/100  {}  ({:.0}% saved, token-weighted)",
+        "  ① Token savings  {:.0}/100  {}  {:.0}% of tokens removed  (target: 70%+)",
         compression_signal,
-        bar(compression_signal).if_supports_color(Stdout, |t| t.green()),
+        bar(compression_signal, compression_color),
         signals.avg_savings_pct,
     );
     println!(
-        "    Pre-run cache   {:.0}/100  {}  ({:.0}% of runs matched cache)",
-        cache_signal,
-        bar(cache_signal).if_supports_color(Stdout, |t| t.cyan()),
-        cache_signal,
+        "     {}",
+        "How much of the raw output PandaFilter actually filtered out. This is the main signal (50% of score)."
+            .if_supports_color(Stdout, |t| t.dimmed()),
     );
-    println!(
-        "    Delta re-reads  {:.0}/100  {}  ({:.0}% of file reads were diffs)",
-        delta_signal,
-        bar(delta_signal).if_supports_color(Stdout, |t| t.cyan()),
-        delta_signal,
-    );
-
-    // Actionable tips — only shown when the signal is low AND actionable
-    if delta_signal < 5.0 && signals.total_records > 50 {
-        println!(
-            "    {}",
-            "Tip: 0 repeated file reads detected. Delta diffs fire automatically when the same file is read twice in a session."
-                .if_supports_color(Stdout, |t| t.dimmed()),
-        );
-    }
     if compression_signal < 40.0 {
         println!(
-            "    {}",
-            "Tip: low token savings — run `panda discover` to find unoptimized commands."
-                .if_supports_color(Stdout, |t| t.dimmed()),
+            "     {}",
+            "→ Low savings — run `panda discover` to find commands that aren't being compressed well."
+                .if_supports_color(Stdout, |t| t.yellow()),
         );
-    }
-    if compression_signal >= 70.0 && cache_signal < 5.0 {
+    } else if compression_signal < 70.0 {
         println!(
-            "    {}",
-            "Tip: great savings! Cache bonus kicks in when commands repeat with identical output."
+            "     {}",
+            "→ Room to improve — run `panda discover` to find the most under-compressed commands."
+                .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    } else {
+        println!(
+            "     {}",
+            "→ Great! PandaFilter is removing most of the noise from your agent's context."
                 .if_supports_color(Stdout, |t| t.dimmed()),
         );
     }
+
+    // ── ② Pre-run cache ────────────────────────────────────────────────────────
+    let cache_hits = (signals.cache_hit_rate * signals.total_records as f64).round() as u64;
+    let cache_color = if cache_signal >= 20.0 { 1 } else { 3 };
+    println!();
+    println!(
+        "  ② Pre-run cache  {:.0}/100  {}  {} cache hit{}",
+        cache_signal,
+        bar(cache_signal, cache_color),
+        cache_hits,
+        if cache_hits == 1 { "" } else { "s" },
+    );
+    println!(
+        "     {}",
+        "When the same command runs again with identical output, PandaFilter skips reprocessing it."
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
+    println!(
+        "     {}",
+        "Improves automatically as you run the same commands repeatedly — no action needed."
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
+
+    // ── ③ Delta re-reads ───────────────────────────────────────────────────────
+    let delta_color = if delta_signal >= 10.0 { 1 } else { 3 };
+    let delta_desc = if delta_signal < 1.0 {
+        "no repeated file reads yet".to_string()
+    } else {
+        format!("{:.0}% of file re-reads sent as diffs", delta_signal)
+    };
+    println!();
+    println!(
+        "  ③ Delta re-reads  {:.0}/100  {}  {}",
+        delta_signal,
+        bar(delta_signal, delta_color),
+        delta_desc,
+    );
+    println!(
+        "     {}",
+        "When the same file is read twice in a session, only the changes are sent — not the full file."
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
+    if delta_signal < 1.0 {
+        println!(
+            "     {}",
+            "0% is normal — it just means no file has been read twice in one session yet. Auto-activates when it does."
+                .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    } else {
+        println!(
+            "     {}",
+            "→ Active! Sending diffs instead of full file content where possible."
+                .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+
+    // ── ④ Activity ─────────────────────────────────────────────────────────────
+    let activity_color = if activity_signal >= 80.0 { 0 } else if activity_signal >= 40.0 { 2 } else { 3 };
+    println!();
+    println!(
+        "  ④ Activity       {:.0}/100  {}  {} runs  (full credit at 30+)",
+        activity_signal,
+        bar(activity_signal, activity_color),
+        signals.total_records,
+    );
+    println!(
+        "     {}",
+        "How much data PandaFilter has seen — more runs = more reliable quality score."
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
+    if activity_signal < 100.0 {
+        let remaining = 30i64 - signals.total_records as i64;
+        if remaining > 0 {
+            println!(
+                "     {}",
+                format!("→ Score will stabilize after {} more run{}. Keep using PandaFilter!", remaining, if remaining == 1 { "" } else { "s" })
+                    .if_supports_color(Stdout, |t| t.dimmed()),
+            );
+        }
+    }
+
+    // ── ⑤ Consistency ─────────────────────────────────────────────────────────
+    let consistency_color = if consistency_signal >= 80.0 { 0 } else if consistency_signal >= 50.0 { 2 } else { 3 };
+    println!();
+    println!(
+        "  ⑤ Consistency   {:.0}/100  {}  savings {}reliably above 30%",
+        consistency_signal,
+        bar(consistency_signal, consistency_color),
+        if consistency_signal >= 100.0 { "" } else { "not yet " },
+    );
+    println!(
+        "     {}",
+        "Whether PandaFilter consistently saves tokens across different types of runs."
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
+    if consistency_signal < 80.0 {
+        println!(
+            "     {}",
+            "→ Some runs have low compression — check `panda discover` for patterns."
+                .if_supports_color(Stdout, |t| t.dimmed()),
+        );
+    }
+
+    println!();
+    println!(
+        "  {}",
+        "Grades: S=90+  A=80+  B=70+  C=55+  D=40+  F<40"
+            .if_supports_color(Stdout, |t| t.dimmed()),
+    );
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
