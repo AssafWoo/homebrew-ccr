@@ -22,6 +22,24 @@
   <a href="https://github.com/AssafWoo/PandaFilter/releases/latest"><img src="https://img.shields.io/github/v/release/AssafWoo/PandaFilter?style=for-the-badge" alt="Latest Release"></a>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Claude_Code-supported-8b5cf6?style=flat-square&logo=anthropic&logoColor=white" alt="Claude Code">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Cursor-supported-0ea5e9?style=flat-square" alt="Cursor">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Windsurf-supported-06b6d4?style=flat-square" alt="Windsurf">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Gemini_CLI-supported-4285F4?style=flat-square&logo=google&logoColor=white" alt="Gemini CLI">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Codex-supported-10b981?style=flat-square&logo=openai&logoColor=white" alt="Codex">
+  &nbsp;
+  <img src="https://img.shields.io/badge/Cline-supported-f59e0b?style=flat-square" alt="Cline">
+  &nbsp;
+  <img src="https://img.shields.io/badge/VS_Code_Copilot-supported-007ACC?style=flat-square&logo=visualstudiocode&logoColor=white" alt="VS Code Copilot">
+  &nbsp;
+  <img src="https://img.shields.io/badge/OpenClaw-supported-ef4444?style=flat-square" alt="OpenClaw">
+</p>
+
 ---
 
 ## Install

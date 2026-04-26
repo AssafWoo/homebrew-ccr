@@ -113,8 +113,13 @@ fn blended_cost(records: &[&Analytics]) -> (f64, String) {
     (total_cost, label)
 }
 
-pub fn run(history: bool, days: u32, breakdown: bool, insight: bool) -> Result<()> {
+pub fn run(history: bool, days: u32, breakdown: bool, insight: bool, share: bool) -> Result<()> {
     let records = load_records()?;
+
+    if share {
+        print_share_link(&records);
+        return Ok(());
+    }
 
     if insight {
         print_insight(&records, days);
@@ -403,6 +408,16 @@ fn print_summary(records: &[Analytics], breakdown: bool, days: u32) {
         println!("{}", "Focus Ranking available".if_supports_color(Stdout, |t| t.bold()));
         println!("{}", "  Give the agent confidence-ranked file hints for large repos.".if_supports_color(Stdout, |t| t.dimmed()));
         println!("{}", "  Run `panda focus --enable` to activate.".if_supports_color(Stdout, |t| t.dimmed()));
+    }
+
+    // ── Share nudge (only for impressive sessions: >50k tokens saved) ──
+    if total_saved >= 50_000 {
+        println!();
+        println!(
+            "  {}  {}",
+            "Share your savings:".if_supports_color(Stdout, |t| t.dimmed()),
+            "panda gain --share".if_supports_color(Stdout, |t| t.cyan()),
+        );
     }
 }
 
@@ -1480,6 +1495,70 @@ fn print_quality_insight(days: u32) {
         "Grades: S=90+  A=80+  B=70+  C=55+  D=40+  F<40"
             .if_supports_color(Stdout, |t| t.dimmed()),
     );
+}
+
+// ─── Share link ───────────────────────────────────────────────────────────────
+
+/// Print a pre-filled X/Twitter share link with the user's live savings stats.
+fn print_share_link(records: &[Analytics]) {
+    let total_input: usize = records.iter().map(|r| r.input_tokens).sum();
+    let total_output: usize = records.iter().map(|r| r.output_tokens).sum();
+    let total_saved = total_input.saturating_sub(total_output);
+    let overall_pct = savings_pct(total_input, total_output);
+    let all_refs: Vec<&Analytics> = records.iter().collect();
+    let (cost_saved, _) = blended_cost(&all_refs);
+
+    let tokens_str = fmt_tokens(total_saved);
+    let pct_str = format!("{:.0}%", overall_pct);
+    let cost_str = if cost_saved >= 0.01 {
+        format!(" (~{} saved)", fmt_cost(cost_saved))
+    } else {
+        String::new()
+    };
+
+    let tweet = format!(
+        "I saved {tokens} tokens ({pct}) on my AI coding sessions using @AssafPetronio's PandaFilter 🐼{cost} #AICoding #Rust\ngithub.com/AssafWoo/PandaFilter",
+        tokens = tokens_str,
+        pct = pct_str,
+        cost = cost_str,
+    );
+
+    // Percent-encode the tweet text for use in a URL query parameter.
+    let encoded: String = tweet
+        .chars()
+        .flat_map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '-' | '_' | '.' | '~' => {
+                vec![c]
+            }
+            ' ' => vec!['%', '2', '0'],
+            '\n' => vec!['%', '0', 'A'],
+            c => {
+                let mut buf = [0u8; 4];
+                let s = c.encode_utf8(&mut buf);
+                s.bytes().flat_map(|b| {
+                    let hi = b >> 4;
+                    let lo = b & 0xf;
+                    let hex = |n: u8| -> char {
+                        if n < 10 { (b'0' + n) as char } else { (b'a' + n - 10) as char }
+                    };
+                    vec!['%', hex(hi), hex(lo)]
+                }).collect()
+            }
+        })
+        .collect();
+
+    let url = format!("https://x.com/intent/tweet?text={}", encoded);
+
+    println!("{}", "Share your savings on X".if_supports_color(Stdout, |t| t.bold()));
+    println!("{}", "─".repeat(48).if_supports_color(Stdout, |t| t.dimmed()));
+    println!("  Tokens saved:  {} ({})", tokens_str.if_supports_color(Stdout, |t| t.green()), pct_str.if_supports_color(Stdout, |t| t.green()));
+    if cost_saved >= 0.01 {
+        println!("  Cost saved:    {}", fmt_cost(cost_saved).if_supports_color(Stdout, |t| t.yellow()));
+    }
+    println!();
+    println!("  {}", url);
+    println!();
+    println!("{}", "  Copy the URL above and open it in your browser to post.".if_supports_color(Stdout, |t| t.dimmed()));
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────

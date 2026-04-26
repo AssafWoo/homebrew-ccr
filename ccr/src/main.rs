@@ -84,6 +84,9 @@ enum Commands {
         /// Show insight view: categorized savings and top individual wins
         #[arg(long)]
         insight: bool,
+        /// Print a pre-filled X/Twitter share link with your savings stats
+        #[arg(long)]
+        share: bool,
     },
     /// Diagnose CCR installation: hook scripts, settings, analytics DB
     Doctor,
@@ -212,7 +215,7 @@ fn main() {
             cmd::focus::run(cmd::focus::FocusArgs { enable, disable, status, dry_run })
         }
         Commands::Filter { command } => cmd::filter::run(command),
-        Commands::Gain { history, days, breakdown, insight } => cmd::gain::run(history, days, breakdown, insight),
+        Commands::Gain { history, days, breakdown, insight, share } => cmd::gain::run(history, days, breakdown, insight, share),
         Commands::Doctor => cmd::doctor::run(),
         Commands::Hook { subcommand: Some(ref sub) } => hook::run_lifecycle(sub),
         Commands::Hook { subcommand: None } => hook::run(),
