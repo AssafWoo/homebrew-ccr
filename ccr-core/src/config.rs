@@ -101,6 +101,14 @@ pub struct GlobalConfig {
     /// experts when one expert exceeds 70% of activations. Prevents expert collapse.
     #[serde(default)]
     pub router_exploration_noise: bool,
+    /// Unix nice level for the panda process. Higher = lower priority.
+    /// Default 10. Set to 0 to disable.
+    #[serde(default = "default_nice_level")]
+    pub nice_level: i32,
+    /// Number of ONNX Runtime intra-op threads. Default 2.
+    /// Higher values speed up large batches but compete with the editor/LSP.
+    #[serde(default = "default_ort_threads")]
+    pub ort_threads: usize,
 }
 
 fn default_input_char_ceiling() -> usize {
@@ -113,6 +121,14 @@ fn default_output_char_cap() -> usize {
 
 fn default_bert_model() -> String {
     "AllMiniLML6V2".to_string()
+}
+
+fn default_nice_level() -> i32 {
+    10
+}
+
+fn default_ort_threads() -> usize {
+    2
 }
 
 fn default_state_commands() -> Vec<String> {
@@ -139,6 +155,8 @@ impl Default for GlobalConfig {
             output_char_cap: default_output_char_cap(),
             use_router: false,
             router_exploration_noise: false,
+            nice_level: default_nice_level(),
+            ort_threads: default_ort_threads(),
         }
     }
 }

@@ -88,6 +88,11 @@ enum Commands {
         #[arg(long)]
         share: bool,
     },
+    /// Manage the embedding daemon (holds BERT model resident for fast inference)
+    Daemon {
+        #[command(subcommand)]
+        action: cmd::daemon::DaemonAction,
+    },
     /// Diagnose CCR installation: hook scripts, settings, analytics DB
     Doctor,
     /// PostToolUse hook mode for Claude Code (hidden)
@@ -206,6 +211,8 @@ fn main() {
     // set_model_name is no-op after first call, so this must run before any summarization.
     if let Ok(config) = config_loader::load_config() {
         panda_core::summarizer::set_model_name(&config.global.bert_model);
+        panda_core::summarizer::set_nice_level(config.global.nice_level);
+        panda_core::summarizer::set_ort_threads(config.global.ort_threads);
         panda_core::summarizer::set_extra_keep_patterns(config.global.hard_keep_patterns.clone());
     }
 
@@ -216,6 +223,7 @@ fn main() {
         }
         Commands::Filter { command } => cmd::filter::run(command),
         Commands::Gain { history, days, breakdown, insight, share } => cmd::gain::run(history, days, breakdown, insight, share),
+        Commands::Daemon { action } => cmd::daemon::run(action),
         Commands::Doctor => cmd::doctor::run(),
         Commands::Hook { subcommand: Some(ref sub) } => hook::run_lifecycle(sub),
         Commands::Hook { subcommand: None } => hook::run(),
