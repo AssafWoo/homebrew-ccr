@@ -121,7 +121,6 @@ extern "C" fn sigterm_handler(_sig: libc::c_int) {
 
 fn daemon_main(sock_path: PathBuf, pid_path: PathBuf) -> Result<()> {
     ensure_dir(&pid_path);
-    std::fs::write(&pid_path, format!("{}", std::process::id()))?;
 
     let _ = std::fs::remove_file(&sock_path);
 
@@ -135,7 +134,6 @@ fn daemon_main(sock_path: PathBuf, pid_path: PathBuf) -> Result<()> {
         panda_core::summarizer::set_ort_threads(config.global.ort_threads);
     }
     if panda_core::summarizer::preload_model().is_err() {
-        let _ = std::fs::remove_file(&pid_path);
         std::process::exit(1);
     }
 
@@ -143,6 +141,11 @@ fn daemon_main(sock_path: PathBuf, pid_path: PathBuf) -> Result<()> {
     let old_umask = unsafe { libc::umask(0o077) };
     let listener = UnixListener::bind(&sock_path)?;
     unsafe { libc::umask(old_umask) };
+
+    // Write PID only after bind succeeds — otherwise a racing second
+    // `daemon start` would overwrite the live daemon's PID with its own
+    // (about-to-die) PID, leaving `stop` unable to find the running daemon.
+    std::fs::write(&pid_path, format!("{}", std::process::id()))?;
     // Blocking listener — no busy-wait.
 
     // Self-pipe for async-signal-safe shutdown.
