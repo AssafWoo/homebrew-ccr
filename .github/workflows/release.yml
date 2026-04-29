@@ -77,6 +77,19 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      # ort-sys 2.x doesn't ship prebuilt binaries for x86_64-apple-darwin.
+      # Download ORT ourselves and point the build script at it.
+      - name: Download ONNX Runtime (macOS)
+        if: matrix.ort_arch != ''
+        run: |
+          ORT_VERSION="1.20.1"
+          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-${{ matrix.ort_arch }}-${ORT_VERSION}.tgz"
+          curl -fsSL "$ORT_URL" -o ort.tgz
+          mkdir -p ort-extracted
+          tar -xzf ort.tgz -C ort-extracted
+          ORT_DIR=$(find ort-extracted -type d -name "onnxruntime-*" | head -1)
+          echo "ORT_LIB_LOCATION=${ORT_DIR}/lib" >> "$GITHUB_ENV"
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }} -p panda
 
@@ -137,16 +150,10 @@ jobs:
 
       # macOS only: bundle binary + ORT dylib into a tarball so brew install
       # needs no build dependencies and completes in seconds.
+      # Reuses ORT downloaded in the earlier step.
       - name: Bundle binary + ORT dylib (macOS)
         if: matrix.ort_arch != ''
         run: |
-          ORT_VERSION="1.20.1"
-          ORT_URL="https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-osx-${{ matrix.ort_arch }}-${ORT_VERSION}.tgz"
-
-          curl -fsSL "$ORT_URL" -o ort.tgz
-          mkdir ort-extracted
-          tar -xzf ort.tgz -C ort-extracted
-
           # Pick the versioned dylib only (skip dSYM debug bundles)
           DYLIB=$(find ort-extracted -name "libonnxruntime.*.dylib" ! -path "*.dSYM*" | head -1)
 
