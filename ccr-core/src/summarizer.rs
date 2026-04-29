@@ -1,3 +1,5 @@
+use anyhow::Context;
+use ndarray::Array2;
 use once_cell::sync::OnceCell;
 use regex::Regex;
 use std::cell::RefCell;
@@ -48,13 +50,32 @@ fn effective_critical_pattern() -> Regex {
     })
 }
 
-// ── P8: Configurable BERT model ───────────────────────────────────────────────
+// ── Configurable BERT model ──────────────────────────────────────────────────
 
 static MODEL_NAME: OnceCell<String> = OnceCell::new();
+static NICE_LEVEL: OnceCell<i32> = OnceCell::new();
+static ORT_THREADS: OnceCell<usize> = OnceCell::new();
 
-/// Set the BERT model name to use. Must be called before the first summarization.
-/// First call wins (subsequent calls are no-ops).
-/// Valid values: "AllMiniLML6V2" (default), "AllMiniLML12V2".
+pub fn set_nice_level(level: i32) {
+    let _ = NICE_LEVEL.set(level);
+}
+
+pub fn set_ort_threads(n: usize) {
+    let _ = ORT_THREADS.set(n);
+}
+
+#[cfg(unix)]
+fn apply_nice_once() {
+    static APPLIED: std::sync::Once = std::sync::Once::new();
+    APPLIED.call_once(|| {
+        if let Some(&level) = NICE_LEVEL.get() {
+            if level > 0 {
+                unsafe { libc::nice(level) };
+            }
+        }
+    });
+}
+
 pub fn set_model_name(name: &str) {
     let _ = MODEL_NAME.set(name.to_string());
 }
@@ -63,12 +84,188 @@ fn get_model_name() -> &'static str {
     MODEL_NAME.get().map(|s| s.as_str()).unwrap_or("AllMiniLML6V2")
 }
 
-// ── Cached model ──────────────────────────────────────────────────────────────
+// ── MiniLM embedder (direct ort) ─────────────────────────────────────────────
 
-static MODEL_CACHE: OnceCell<fastembed::TextEmbedding> = OnceCell::new();
+struct MiniLmEmbedder {
+    session: std::sync::Mutex<ort::session::Session>,
+    tokenizer: tokenizers::Tokenizer,
+    need_token_type_ids: bool,
+}
 
-/// Sentinel file written after a successful model load/download.
-/// Its presence means the model files are already on disk.
+#[derive(Debug)]
+struct HfModel {
+    repo: &'static str,
+    model_file: &'static str,
+}
+
+fn model_registry(name: &str) -> HfModel {
+    match name {
+        "AllMiniLML12V2" => HfModel {
+            repo: "Xenova/all-MiniLM-L12-v2",
+            model_file: "onnx/model.onnx",
+        },
+        _ => HfModel {
+            repo: "Qdrant/all-MiniLM-L6-v2-onnx",
+            model_file: "model.onnx",
+        },
+    }
+}
+
+fn resolve_model_files(
+    name: &str,
+) -> anyhow::Result<(std::path::PathBuf, std::path::PathBuf)> {
+    let reg = model_registry(name);
+    let api = hf_hub::api::sync::Api::new()
+        .context("failed to initialize HuggingFace API — check HOME and cache dir permissions")?;
+    let repo = api.model(reg.repo.to_string());
+
+    let model_path = repo.get(reg.model_file)?;
+    let tokenizer_path = repo.get("tokenizer.json")?;
+    Ok((model_path, tokenizer_path))
+}
+
+fn load_tokenizer(tokenizer_path: &std::path::Path) -> anyhow::Result<tokenizers::Tokenizer> {
+    use tokenizers::{PaddingParams, PaddingStrategy, TruncationParams};
+
+    let mut tokenizer = tokenizers::Tokenizer::from_file(tokenizer_path)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    tokenizer.with_padding(Some(PaddingParams {
+        strategy: PaddingStrategy::BatchLongest,
+        pad_id: 0,
+        pad_token: "[PAD]".to_string(),
+        ..Default::default()
+    }));
+
+    tokenizer.with_truncation(Some(TruncationParams {
+        max_length: 512,
+        ..Default::default()
+    })).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    Ok(tokenizer)
+}
+
+fn ort_err(e: impl std::fmt::Display) -> anyhow::Error {
+    anyhow::anyhow!("{e}")
+}
+
+impl MiniLmEmbedder {
+    fn new(name: &str) -> anyhow::Result<Self> {
+        let (model_path, tokenizer_path) = resolve_model_files(name)?;
+        let tokenizer = load_tokenizer(&tokenizer_path)?;
+
+        let threads = ORT_THREADS.get().copied().unwrap_or(2).max(1);
+        let mut builder = ort::session::Session::builder().map_err(ort_err)?;
+        builder = builder
+            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+            .map_err(ort_err)?;
+        builder = builder.with_memory_pattern(false).map_err(ort_err)?;
+        builder = builder.with_intra_threads(threads).map_err(ort_err)?;
+        builder = builder
+            .with_execution_providers([ort::ep::CPU::default().with_arena_allocator(false).build()])
+            .map_err(ort_err)?;
+        let session = builder.commit_from_file(&model_path).map_err(ort_err)?;
+
+        let need_token_type_ids = session
+            .inputs()
+            .iter()
+            .any(|inp| inp.name() == "token_type_ids");
+
+        Ok(Self {
+            session: std::sync::Mutex::new(session),
+            tokenizer,
+            need_token_type_ids,
+        })
+    }
+
+    fn embed(&self, texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
+        if texts.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let encodings = self
+            .tokenizer
+            .encode_batch(texts.to_vec(), true)
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        let batch_size = encodings.len();
+        let seq_len = encodings[0].get_ids().len();
+        debug_assert!(encodings.iter().all(|e| e.get_ids().len() == seq_len));
+
+        let mut input_ids = Vec::with_capacity(batch_size * seq_len);
+        let mut attention_mask = Vec::with_capacity(batch_size * seq_len);
+
+        for enc in &encodings {
+            input_ids.extend(enc.get_ids().iter().map(|&id| id as i64));
+            attention_mask.extend(enc.get_attention_mask().iter().map(|&m| m as i64));
+        }
+
+        let ids_array = Array2::from_shape_vec((batch_size, seq_len), input_ids)?;
+        let mask_array = Array2::from_shape_vec((batch_size, seq_len), attention_mask)?;
+
+        let ids_value = ort::value::Value::from_array(ids_array).map_err(ort_err)?;
+        let mask_value = ort::value::Value::from_array(mask_array).map_err(ort_err)?;
+
+        let mut inputs = ort::inputs![
+            "input_ids" => ids_value,
+            "attention_mask" => mask_value,
+        ];
+
+        if self.need_token_type_ids {
+            let mut token_type_ids = Vec::with_capacity(batch_size * seq_len);
+            for enc in &encodings {
+                token_type_ids.extend(enc.get_type_ids().iter().map(|&t| t as i64));
+            }
+            let tti_array =
+                Array2::from_shape_vec((batch_size, seq_len), token_type_ids)?;
+            let tti_value = ort::value::Value::from_array(tti_array).map_err(ort_err)?;
+            inputs.push((
+                "token_type_ids".into(),
+                ort::session::SessionInputValue::from(tti_value),
+            ));
+        }
+
+        let mut session = self.session.lock().unwrap_or_else(|e| e.into_inner());
+        let outputs = session.run(inputs).map_err(ort_err)?;
+
+        let hidden = outputs
+            .get("last_hidden_state")
+            .or_else(|| outputs.get("sentence_embedding"))
+            .or_else(|| outputs.get("pooler_output"))
+            .ok_or_else(|| anyhow::anyhow!("no output tensor"))?;
+
+        let (shape, data) = hidden.try_extract_tensor::<f32>().map_err(ort_err)?;
+        let hidden_dim = shape[2] as usize;
+
+        let mut result = Vec::with_capacity(batch_size);
+        for b in 0..batch_size {
+            let mut pooled = vec![0.0f32; hidden_dim];
+            let mut mask_sum = 0.0f32;
+            for s in 0..seq_len {
+                let m = encodings[b].get_attention_mask()[s] as f32;
+                if m > 0.0 {
+                    mask_sum += m;
+                    let offset = b * seq_len * hidden_dim + s * hidden_dim;
+                    let row = &data[offset..offset + hidden_dim];
+                    for (i, &v) in row.iter().enumerate() {
+                        pooled[i] += v * m;
+                    }
+                }
+            }
+            if mask_sum > 0.0 {
+                pooled.iter_mut().for_each(|v| *v /= mask_sum);
+            }
+            result.push(pooled);
+        }
+
+        Ok(result)
+    }
+}
+
+// ── Cached model ─────────────────────────────────────────────────────────────
+
+static MODEL_CACHE: OnceCell<MiniLmEmbedder> = OnceCell::new();
+
 fn bert_sentinel() -> Option<std::path::PathBuf> {
     std::env::var("HOME").ok().map(|h| {
         std::path::PathBuf::from(h)
@@ -79,52 +276,41 @@ fn bert_sentinel() -> Option<std::path::PathBuf> {
     })
 }
 
-fn bert_is_cached() -> bool {
-    bert_sentinel().map(|p| p.exists()).unwrap_or(false)
+fn bert_is_cached(name: &str) -> bool {
+    bert_sentinel()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .map(|content| {
+            let trimmed = content.trim();
+            // Pre-model-tracking sentinels were empty; treat as cached for the
+            // legacy default so existing installs upgrade without a confusing
+            // "downloading model" message.
+            trimmed == name || (trimmed.is_empty() && name == "AllMiniLML6V2")
+        })
+        .unwrap_or(false)
 }
 
-fn mark_bert_cached() {
+fn mark_bert_cached(name: &str) {
     if let Some(path) = bert_sentinel() {
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        let _ = std::fs::write(path, "");
+        let _ = std::fs::write(path, name);
     }
 }
 
-fn load_model(name: &str) -> anyhow::Result<fastembed::TextEmbedding> {
-    use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
-
-    if !bert_is_cached() {
-        eprintln!("[panda] downloading BERT model ({}, one-time setup)...", name);
-        eprintln!("[panda] this may take a minute. future runs are instant.");
-    }
-
-    let embedding_model = match name {
-        "AllMiniLML12V2" => EmbeddingModel::AllMiniLML12V2,
-        _ => EmbeddingModel::AllMiniLML6V2,
-    };
-
-    let cache_dir = std::env::var("HOME")
-        .map(|h| std::path::PathBuf::from(h).join(".local/share/ccr/fastembed"))
-        .unwrap_or_else(|_| std::path::PathBuf::from(".fastembed_cache"));
-
-    let model = TextEmbedding::try_new(
-        InitOptions::new(embedding_model)
-            .with_cache_dir(cache_dir)
-            .with_show_download_progress(false),
-    )?;
-
-    mark_bert_cached();
-    Ok(model)
+fn get_model() -> anyhow::Result<&'static MiniLmEmbedder> {
+    MODEL_CACHE.get_or_try_init(|| {
+        let name = get_model_name();
+        if !bert_is_cached(name) {
+            eprintln!("[panda] downloading BERT model ({name}, one-time setup)...");
+            eprintln!("[panda] this may take a minute. future runs are instant.");
+        }
+        let embedder = MiniLmEmbedder::new(name)?;
+        mark_bert_cached(name);
+        Ok(embedder)
+    })
 }
 
-fn get_model() -> anyhow::Result<&'static fastembed::TextEmbedding> {
-    MODEL_CACHE.get_or_try_init(|| load_model(get_model_name()))
-}
-
-/// Pre-warm the BERT model — downloads and caches it if not already present.
-/// Called by `ccr init` so the download happens at setup time, not mid-session.
 pub fn preload_model() -> anyhow::Result<()> {
     get_model()?;
     Ok(())
@@ -188,18 +374,28 @@ fn compute_centroid(embeddings: &[Vec<f32>]) -> Vec<f32> {
     centroid
 }
 
-/// Embed `texts` and L2-normalize every output vector.
-/// All downstream similarity calls can then use `dot` instead of full cosine similarity,
-/// eliminating two sqrt calls per pair.
-fn embed_and_normalize(
-    model: &fastembed::TextEmbedding,
-    texts: Vec<&str>,
-) -> anyhow::Result<Vec<Vec<f32>>> {
-    let mut embeddings = model.embed(texts, None)?;
+pub fn embed_direct(texts: Vec<&str>) -> anyhow::Result<Vec<Vec<f32>>> {
+    let model = get_model()?;
+    let mut embeddings = model.embed(&texts)?;
     for emb in &mut embeddings {
         l2_normalize(emb);
     }
     Ok(embeddings)
+}
+
+pub fn embed_raw(texts: Vec<&str>) -> anyhow::Result<Vec<Vec<f32>>> {
+    let model = get_model()?;
+    model.embed(&texts)
+}
+
+fn embed_and_normalize(texts: Vec<&str>) -> anyhow::Result<Vec<Vec<f32>>> {
+    #[cfg(unix)]
+    if let Some(embeddings) = crate::embed_client::daemon_embed(&texts, true) {
+        return Ok(embeddings);
+    }
+    #[cfg(unix)]
+    apply_nice_once();
+    embed_direct(texts)
 }
 
 // ── Public result types ───────────────────────────────────────────────────────
@@ -290,14 +486,13 @@ fn summarize_semantic_intent(
         return Ok(lines.join("\n"));
     }
 
-    let model = get_model()?;
 
     // Embed lines + command + intent in one batch
     let mut texts: Vec<&str> = indexed_lines.iter().map(|(_, l)| *l).collect();
     texts.push(command);
     texts.push(intent);
 
-    let all_embeddings = embed_and_normalize(model, texts)?;
+    let all_embeddings = embed_and_normalize(texts)?;
     let n = indexed_lines.len();
     let cmd_emb = &all_embeddings[n];
     let intent_emb = &all_embeddings[n + 1];
@@ -406,7 +601,6 @@ fn summarize_semantic(
         return Ok(lines.join("\n"));
     }
 
-    let model = get_model()?;
 
     // Embed lines + optional query in one batch, L2-normalizing all vectors so
     // downstream similarity calls reduce to plain dot products.
@@ -416,7 +610,7 @@ fn summarize_semantic(
         texts.push(q);
     }
 
-    let all_embeddings = embed_and_normalize(model, texts)?;
+    let all_embeddings = embed_and_normalize(texts)?;
     let query_emb: Option<&Vec<f32>> = if has_query { all_embeddings.last() } else { None };
     let embeddings = if has_query {
         &all_embeddings[..all_embeddings.len() - 1]
@@ -584,9 +778,8 @@ fn summarize_semantic_anchored(
         if let Some(pre) = precomputed.filter(|p| p.len() == n) {
             pre
         } else {
-            let model = get_model()?;
             let texts: Vec<&str> = indexed_lines.iter().map(|(_, l)| *l).collect();
-            embed_and_normalize(model, texts)?
+            embed_and_normalize(texts)?
         };
 
     let centroid = compute_centroid(&embeddings);
@@ -721,16 +914,11 @@ pub fn entropy_adjusted_budget(text: &str, max_budget: usize) -> usize {
         return max_budget;
     }
 
-    let model = match get_model() {
-        Ok(m) => m,
-        Err(_) => return max_budget,
-    };
-
     // Sample up to 100 lines evenly to avoid O(N²) cost on huge inputs
     let step = (lines.len() / 100).max(1);
     let sample: Vec<&str> = lines.iter().step_by(step).copied().collect();
 
-    let embeddings = match embed_and_normalize(model, sample) {
+    let embeddings = match embed_and_normalize(sample) {
         Ok(e) => e,
         Err(_) => return max_budget,
     };
@@ -885,9 +1073,8 @@ fn summarize_sentences_semantic(
     budget: usize,
     hard_keep: impl Fn(&str) -> bool,
 ) -> anyhow::Result<String> {
-    let model = get_model()?;
     let texts: Vec<&str> = sentences.iter().map(|s| s.as_str()).collect();
-    let embeddings = embed_and_normalize(model, texts)?;
+    let embeddings = embed_and_normalize(texts)?;
 
     let centroid = compute_centroid(&embeddings);
 
@@ -993,9 +1180,8 @@ fn do_cluster_summarize(
         if let Some(pre) = precomputed.filter(|p| p.len() == n) {
             pre
         } else {
-            let model = get_model()?;
             let texts: Vec<&str> = indexed.iter().map(|(_, l)| *l).collect();
-            embed_and_normalize(model, texts)?
+            embed_and_normalize(texts)?
         };
 
     // ── Greedy clustering ────────────────────────────────────────────────────
@@ -1145,9 +1331,8 @@ fn summarize_against_centroid_inner(
         return Ok(lines.join("\n"));
     }
 
-    let model = get_model()?;
     let texts: Vec<&str> = indexed_lines.iter().map(|(_, l)| *l).collect();
-    let embeddings = embed_and_normalize(model, texts)?;
+    let embeddings = embed_and_normalize(texts)?;
 
     // Normalize the historical centroid at the point of use so it is compatible with
     // the unit-length line embeddings regardless of when it was stored (before or after
@@ -1231,19 +1416,13 @@ static NOISE_EMB: OnceCell<Vec<f32>> = OnceCell::new();
 
 fn useful_embedding() -> anyhow::Result<&'static Vec<f32>> {
     USEFUL_EMB.get_or_try_init(|| {
-        let model = get_model()?;
-        let mut emb = model.embed(vec![USEFUL_PROTOTYPE], None)?.remove(0);
-        l2_normalize(&mut emb);
-        Ok(emb)
+        Ok(embed_and_normalize(vec![USEFUL_PROTOTYPE])?.remove(0))
     })
 }
 
 fn noise_embedding() -> anyhow::Result<&'static Vec<f32>> {
     NOISE_EMB.get_or_try_init(|| {
-        let model = get_model()?;
-        let mut emb = model.embed(vec![NOISE_PROTOTYPE], None)?.remove(0);
-        l2_normalize(&mut emb);
-        Ok(emb)
+        Ok(embed_and_normalize(vec![NOISE_PROTOTYPE])?.remove(0))
     })
 }
 
@@ -1258,11 +1437,10 @@ pub fn noise_scores(lines: &[&str]) -> anyhow::Result<Vec<f32>> {
         return Ok(vec![]);
     }
 
-    let model = get_model()?;
     let useful_emb = useful_embedding()?;
     let noise_emb = noise_embedding()?;
 
-    let embeddings = embed_and_normalize(model, lines.to_vec())?;
+    let embeddings = embed_and_normalize(lines.to_vec())?;
 
     let scores = embeddings
         .iter()
@@ -1305,12 +1483,11 @@ pub fn noise_filter_with_embeddings(
         return Ok((lines.iter().map(|s| s.to_string()).collect(), vec![]));
     }
 
-    let model = get_model()?;
     let useful_emb = useful_embedding()?;
     let noise_emb = noise_embedding()?;
 
     let texts: Vec<&str> = non_empty.iter().map(|(_, l)| *l).collect();
-    let embeddings = embed_and_normalize(model, texts)?;
+    let embeddings = embed_and_normalize(texts)?;
 
     // Mark noisy lines for removal
     let mut drop_set: std::collections::HashSet<usize> = std::collections::HashSet::new();
@@ -1344,8 +1521,7 @@ pub fn noise_filter_with_embeddings(
 // ── Batch embedding (public) ──────────────────────────────────────────────────
 
 pub fn embed_batch(texts: &[&str]) -> anyhow::Result<Vec<Vec<f32>>> {
-    let model = get_model()?;
-    embed_and_normalize(model, texts.to_vec())
+    embed_and_normalize(texts.to_vec())
 }
 
 /// Compute the mean embedding of all non-empty lines in `text`.
@@ -1393,8 +1569,7 @@ pub fn compute_centroid_from_embeddings(embeddings: &[Vec<f32>]) -> Vec<f32> {
 
 /// Compute semantic similarity between two texts. Used as a quality gate on generative output.
 pub fn semantic_similarity(a: &str, b: &str) -> anyhow::Result<f32> {
-    let model = get_model()?;
-    let embeddings = embed_and_normalize(model, vec![a, b])?;
+    let embeddings = embed_and_normalize(vec![a, b])?;
     Ok(dot(&embeddings[0], &embeddings[1]))
 }
 
@@ -1592,5 +1767,87 @@ mod tests {
         for (a, b) in from_pre.iter().zip(from_text.iter()) {
             assert!((a - b).abs() < 1e-5, "mismatch at dim: {} vs {}", a, b);
         }
+    }
+
+    #[test]
+    fn model_registry_l6_default() {
+        let reg = model_registry("AllMiniLML6V2");
+        assert_eq!(reg.repo, "Qdrant/all-MiniLM-L6-v2-onnx");
+        assert_eq!(reg.model_file, "model.onnx");
+    }
+
+    #[test]
+    fn model_registry_l12() {
+        let reg = model_registry("AllMiniLML12V2");
+        assert_eq!(reg.repo, "Xenova/all-MiniLM-L12-v2");
+        assert_eq!(reg.model_file, "onnx/model.onnx");
+    }
+
+    #[test]
+    fn model_registry_unknown_falls_back_to_l6() {
+        let reg = model_registry("NonexistentModel");
+        assert_eq!(reg.repo, "Qdrant/all-MiniLM-L6-v2-onnx");
+    }
+
+    #[test]
+    fn mean_pooling_known_values() {
+        // 1 item, seq_len=3, hidden_dim=4
+        // attention_mask = [1, 1, 0] (third token is padding)
+        // hidden states: row0=[1,2,3,4], row1=[5,6,7,8], row2=[9,9,9,9] (ignored)
+        // expected: (row0 + row1) / 2 = [3, 4, 5, 6]
+        let hidden_dim = 4;
+        let seq_len = 3;
+        let data: Vec<f32> = vec![
+            1.0, 2.0, 3.0, 4.0, // token 0
+            5.0, 6.0, 7.0, 8.0, // token 1
+            9.0, 9.0, 9.0, 9.0, // token 2 (padding)
+        ];
+        let attention_mask: Vec<u32> = vec![1, 1, 0];
+
+        let mut pooled = vec![0.0f32; hidden_dim];
+        let mut mask_sum = 0.0f32;
+        for s in 0..seq_len {
+            let m = attention_mask[s] as f32;
+            if m > 0.0 {
+                mask_sum += m;
+                let offset = s * hidden_dim;
+                let row = &data[offset..offset + hidden_dim];
+                for (i, &v) in row.iter().enumerate() {
+                    pooled[i] += v * m;
+                }
+            }
+        }
+        if mask_sum > 0.0 {
+            pooled.iter_mut().for_each(|v| *v /= mask_sum);
+        }
+
+        assert_eq!(pooled, vec![3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn mean_pooling_all_masked() {
+        let hidden_dim = 3;
+        let seq_len = 2;
+        let data: Vec<f32> = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+        let attention_mask: Vec<u32> = vec![0, 0];
+
+        let mut pooled = vec![0.0f32; hidden_dim];
+        let mut mask_sum = 0.0f32;
+        for s in 0..seq_len {
+            let m = attention_mask[s] as f32;
+            if m > 0.0 {
+                mask_sum += m;
+                let offset = s * hidden_dim;
+                let row = &data[offset..offset + hidden_dim];
+                for (i, &v) in row.iter().enumerate() {
+                    pooled[i] += v * m;
+                }
+            }
+        }
+        if mask_sum > 0.0 {
+            pooled.iter_mut().for_each(|v| *v /= mask_sum);
+        }
+
+        assert_eq!(pooled, vec![0.0, 0.0, 0.0]);
     }
 }
