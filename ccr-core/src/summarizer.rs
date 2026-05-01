@@ -213,16 +213,63 @@ impl MiniLmEmbedder {
         let tokenizer = load_tokenizer(&tokenizer_path)?;
 
         let threads = ORT_THREADS.get().copied().unwrap_or(2).max(1);
-        let mut builder = ort::session::Session::builder().map_err(ort_err)?;
-        builder = builder
-            .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
-            .map_err(ort_err)?;
-        builder = builder.with_memory_pattern(false).map_err(ort_err)?;
-        builder = builder.with_intra_threads(threads).map_err(ort_err)?;
-        builder = builder
-            .with_execution_providers([ort::ep::CPU::default().with_arena_allocator(false).build()])
-            .map_err(ort_err)?;
-        let session = builder.commit_from_file(&model_path).map_err(ort_err)?;
+
+        // Build the EP list. CPU is always last so ORT can per-op fall through
+        // when the accelerator EP can't compile a node.
+        let strict = std::env::var("PANDA_NPU_STRICT").ok().as_deref() == Some("1");
+        let chosen_ep = current_ep();
+
+        let build_session = |use_npu: bool| -> anyhow::Result<ort::session::Session> {
+            let mut b = ort::session::Session::builder().map_err(ort_err)?;
+            b = b
+                .with_optimization_level(ort::session::builder::GraphOptimizationLevel::Level3)
+                .map_err(ort_err)?;
+            b = b.with_memory_pattern(false).map_err(ort_err)?;
+            b = b.with_intra_threads(threads).map_err(ort_err)?;
+
+            let mut eps: Vec<ort::ep::ExecutionProviderDispatch> = Vec::new();
+            #[cfg(feature = "openvino")]
+            if use_npu {
+                eps.push(
+                    ort::ep::OpenVINO::default()
+                        .with_device_type("NPU")
+                        .build()
+                        .into(),
+                );
+            }
+            // Suppress the "unused" warning when the openvino feature is off.
+            let _ = use_npu;
+            eps.push(
+                ort::ep::CPU::default()
+                    .with_arena_allocator(false)
+                    .build()
+                    .into(),
+            );
+
+            b = b.with_execution_providers(eps).map_err(ort_err)?;
+            b.commit_from_file(&model_path).map_err(ort_err)
+        };
+
+        let want_npu = chosen_ep == "npu";
+        let session = match build_session(want_npu) {
+            Ok(s) => {
+                eprintln!(
+                    "[panda] embedder: {} on {}",
+                    name,
+                    if want_npu { "NPU" } else { "CPU" }
+                );
+                s
+            }
+            Err(e) if want_npu && !strict => {
+                eprintln!(
+                    "[panda] OpenVINO EP unavailable: {e}; falling back to CPU"
+                );
+                let s = build_session(false)?;
+                eprintln!("[panda] embedder: {} on CPU (fallback)", name);
+                s
+            }
+            Err(e) => return Err(e),
+        };
 
         let need_token_type_ids = session
             .inputs()
