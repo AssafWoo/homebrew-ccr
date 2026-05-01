@@ -64,6 +64,64 @@ pub fn set_ort_threads(n: usize) {
     let _ = ORT_THREADS.set(n);
 }
 
+static EXECUTION_PROVIDER: OnceCell<String> = OnceCell::new();
+
+/// Set the desired ORT execution provider. Values: "auto", "cpu", "npu".
+/// First call wins, mirroring `set_model_name` semantics.
+pub fn set_execution_provider(s: &str) {
+    let _ = EXECUTION_PROVIDER.set(s.to_string());
+}
+
+/// Resolve the configured execution provider into a concrete EP name.
+///
+/// Resolution order:
+///   1. If `PANDA_NPU` env var is set, it wins.
+///   2. Otherwise the `configured` argument (typically read from
+///      `EXECUTION_PROVIDER.get()`) is used.
+///   3. "auto" / unknown values resolve to "npu" if the openvino feature
+///      is compiled in, else "cpu".
+///
+/// Always returns either "cpu" or "npu" — never "auto".
+pub(crate) fn ep_choice(configured: &str) -> &'static str {
+    let raw = std::env::var("PANDA_NPU")
+        .ok()
+        .unwrap_or_else(|| configured.to_string());
+    match raw.as_str() {
+        "cpu" => "cpu",
+        "npu" => {
+            #[cfg(feature = "openvino")]
+            { "npu" }
+            #[cfg(not(feature = "openvino"))]
+            {
+                static WARNED: std::sync::Once = std::sync::Once::new();
+                WARNED.call_once(|| {
+                    eprintln!(
+                        "[panda] execution_provider=npu but binary built without \
+                         openvino feature; using CPU"
+                    );
+                });
+                "cpu"
+            }
+        }
+        _ => {
+            // "auto" or unknown — resolve based on compiled feature set.
+            #[cfg(feature = "openvino")]
+            { "npu" }
+            #[cfg(not(feature = "openvino"))]
+            { "cpu" }
+        }
+    }
+}
+
+/// Convenience: read the configured EP from the static and resolve it.
+pub(crate) fn current_ep() -> &'static str {
+    let configured = EXECUTION_PROVIDER
+        .get()
+        .map(|s| s.as_str())
+        .unwrap_or("auto");
+    ep_choice(configured)
+}
+
 #[cfg(unix)]
 fn apply_nice_once() {
     static APPLIED: std::sync::Once = std::sync::Once::new();
@@ -1849,5 +1907,46 @@ mod tests {
         }
 
         assert_eq!(pooled, vec![0.0, 0.0, 0.0]);
+    }
+}
+
+#[cfg(test)]
+mod ep_resolver_tests {
+    use super::ep_choice;
+
+    fn clear_env() {
+        std::env::remove_var("PANDA_NPU");
+    }
+
+    #[test]
+    fn auto_resolves_to_cpu_without_feature_flag() {
+        // Without `--features openvino`, "auto" must resolve to "cpu".
+        clear_env();
+        let resolved = ep_choice("auto");
+        #[cfg(not(feature = "openvino"))]
+        assert_eq!(resolved, "cpu");
+        #[cfg(feature = "openvino")]
+        assert_eq!(resolved, "npu");
+    }
+
+    #[test]
+    fn explicit_cpu_stays_cpu() {
+        clear_env();
+        assert_eq!(ep_choice("cpu"), "cpu");
+    }
+
+    #[test]
+    fn unknown_value_falls_back_to_cpu_without_panic() {
+        clear_env();
+        // Should not panic. Unknown values resolve like "auto".
+        let resolved = ep_choice("banana");
+        assert!(resolved == "cpu" || resolved == "npu");
+    }
+
+    #[test]
+    fn panda_npu_env_overrides_config() {
+        std::env::set_var("PANDA_NPU", "cpu");
+        assert_eq!(ep_choice("npu"), "cpu");
+        std::env::remove_var("PANDA_NPU");
     }
 }
