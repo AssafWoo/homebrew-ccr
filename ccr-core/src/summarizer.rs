@@ -114,7 +114,7 @@ pub(crate) fn ep_choice(configured: &str) -> &'static str {
 }
 
 /// Convenience: read the configured EP from the static and resolve it.
-pub(crate) fn current_ep() -> &'static str {
+pub fn current_ep() -> &'static str {
     let configured = EXECUTION_PROVIDER
         .get()
         .map(|s| s.as_str())
@@ -366,6 +366,7 @@ fn get_model() -> anyhow::Result<&'static MiniLmEmbedder> {
         }
         let embedder = MiniLmEmbedder::new(name)?;
         mark_bert_cached(name);
+        eprintln!("[panda] embedder: {} on CPU (ort)", name);
         Ok(embedder)
     })
 }
@@ -497,6 +498,17 @@ fn compute_centroid(embeddings: &[Vec<f32>]) -> Vec<f32> {
 }
 
 pub fn embed_direct(texts: Vec<&str>) -> anyhow::Result<Vec<Vec<f32>>> {
+    #[cfg(feature = "openvino")]
+    if current_ep() == "npu" {
+        if let Some(ov) = get_ov_embedder() {
+            let texts_slice: Vec<&str> = texts.iter().copied().collect();
+            let mut v = ov.embed(&texts_slice)?;
+            for e in &mut v {
+                l2_normalize(e);
+            }
+            return Ok(v);
+        }
+    }
     let model = get_model()?;
     let mut embeddings = model.embed(&texts)?;
     for emb in &mut embeddings {
@@ -514,6 +526,17 @@ fn embed_and_normalize(texts: Vec<&str>) -> anyhow::Result<Vec<Vec<f32>>> {
     #[cfg(unix)]
     if let Some(embeddings) = crate::embed_client::daemon_embed(&texts, true) {
         return Ok(embeddings);
+    }
+    #[cfg(feature = "openvino")]
+    if current_ep() == "npu" {
+        if let Some(ov) = get_ov_embedder() {
+            let texts_slice: Vec<&str> = texts.iter().copied().collect();
+            let mut v = ov.embed(&texts_slice)?;
+            for e in &mut v {
+                l2_normalize(e);
+            }
+            return Ok(v);
+        }
     }
     #[cfg(unix)]
     apply_nice_once();
