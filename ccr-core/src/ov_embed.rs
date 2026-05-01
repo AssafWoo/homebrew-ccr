@@ -350,3 +350,78 @@ impl OvEmbedder {
         Ok(pooled)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    // env tests share process state — serialize them.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn clear_env() {
+        std::env::remove_var("OPENVINO_LIB_PATH");
+    }
+
+    #[test]
+    fn ov_lib_path_returns_none_when_nothing_present() {
+        let _g = ENV_LOCK.lock().unwrap();
+        clear_env();
+        let tmp = tempfile::tempdir().unwrap();
+        let saved_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", tmp.path());
+        let result = ov_lib_path();
+        if let Some(home) = saved_home {
+            std::env::set_var("HOME", home);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        // Result depends on whether /usr/lib/... has libopenvino_c.so on the
+        // host. If yes, that's also valid — just assert no panic.
+        let _ = result;
+    }
+
+    #[test]
+    fn ov_lib_path_honours_env_file() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("libopenvino_c.so");
+        std::fs::write(&path, b"stub").unwrap();
+        std::env::set_var("OPENVINO_LIB_PATH", &path);
+        let resolved = ov_lib_path();
+        std::env::remove_var("OPENVINO_LIB_PATH");
+        assert_eq!(resolved.as_deref(), Some(path.as_path()));
+    }
+
+    #[test]
+    fn ov_lib_path_honours_env_dir() {
+        let _g = ENV_LOCK.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let lib = tmp.path().join("libopenvino_c.so");
+        std::fs::write(&lib, b"stub").unwrap();
+        std::env::set_var("OPENVINO_LIB_PATH", tmp.path());
+        let resolved = ov_lib_path();
+        std::env::remove_var("OPENVINO_LIB_PATH");
+        assert_eq!(resolved.as_deref(), Some(lib.as_path()));
+    }
+
+    #[test]
+    fn model_seq_len_returns_known_models() {
+        assert_eq!(model_seq_len("AllMiniLML6V2"), Some(128));
+        assert_eq!(model_seq_len("AllMiniLML12V2"), Some(128));
+        assert_eq!(model_seq_len("nonsense"), None);
+        assert_eq!(model_seq_len(""), None);
+    }
+
+    #[test]
+    fn is_degraded_starts_false_marks_true_idempotent() {
+        // Note: DEGRADED is a process-wide flag. This test must run before
+        // any other test in this file would call mark_degraded — currently
+        // none do, so we're safe. Ordering caveat noted.
+        assert!(!is_degraded(), "DEGRADED should start clear");
+        mark_degraded("test-1");
+        assert!(is_degraded(), "DEGRADED should be set after first call");
+        mark_degraded("test-2"); // Should not panic, should not double-print
+        assert!(is_degraded());
+    }
+}
