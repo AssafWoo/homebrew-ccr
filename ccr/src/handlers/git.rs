@@ -195,13 +195,15 @@ const TRAILERS: &[&str] = &[
 ];
 
 fn filter_log(output: &str) -> String {
+    const LOG_LINE_CAP: usize = 15;
+
     let lines: Vec<&str> = output
         .lines()
         .filter(|l| {
             let msg = l.splitn(2, ' ').nth(1).unwrap_or("");
             !TRAILERS.iter().any(|t| msg.trim_start().starts_with(t))
         })
-        .take(50)
+        .take(LOG_LINE_CAP)
         .collect();
 
     let total = output.lines().count();
@@ -217,8 +219,8 @@ fn filter_log(output: &str) -> String {
         })
         .collect();
 
-    if total > 50 {
-        result.push(format!("[+{} more commits, {} total]", total - 50, total));
+    if total > LOG_LINE_CAP {
+        result.push(format!("[+{} more commits, {} total]", total - LOG_LINE_CAP, total));
     }
     result.join("\n")
 }
@@ -1005,6 +1007,21 @@ mod tests {
         assert!(result.contains("fix: real commit"), "real commit should remain");
         assert!(!result.contains("Signed-off-by"), "trailer commits should be stripped");
         assert!(!result.contains("Co-authored-by"), "trailer commits should be stripped");
+    }
+
+    #[test]
+    fn test_log_caps_at_15_lines() {
+        let mut lines: Vec<String> = Vec::new();
+        for i in 0..30 {
+            lines.push(format!("abc{:04} commit message {}", i, i));
+        }
+        let output = lines.join("\n");
+        let result = filter_log(&output);
+        let result_lines: Vec<&str> = result.lines().collect();
+        // 15 commits + 1 overflow line = 16
+        assert_eq!(result_lines.len(), 16, "expected 16 lines, got: {}", result_lines.len());
+        assert!(result_lines.last().unwrap().contains("[+15 more commits, 30 total]"),
+            "should show overflow: {}", result_lines.last().unwrap());
     }
 
     #[test]
