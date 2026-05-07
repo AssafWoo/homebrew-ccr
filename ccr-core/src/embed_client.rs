@@ -2,11 +2,13 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RETRIES: u32 = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+const STARTUP_POLL_DELAY: Duration = Duration::from_millis(250);
 
 static SOCKET_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -31,17 +33,34 @@ pub fn pid_path() -> PathBuf {
 
 pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
     let sock = socket_path();
+    let mut started = false;
     if !sock.exists() {
-        try_auto_start();
-        return None;
+        started = try_auto_start();
+        if !started {
+            return None;
+        }
     }
 
+    let startup_deadline = Instant::now() + STARTUP_TIMEOUT;
     for attempt in 0..=MAX_RETRIES {
         let stream = match UnixStream::connect(&sock) {
             Ok(s) => s,
             Err(_) => {
+                if !started {
+                    started = try_auto_start();
+                    if !started {
+                        return None;
+                    }
+                }
+                while Instant::now() < startup_deadline {
+                    std::thread::sleep(STARTUP_POLL_DELAY);
+                    if let Ok(s) = UnixStream::connect(&sock) {
+                        if let Some(result) = send_with_timeouts(s, texts, normalize) {
+                            return Some(result);
+                        }
+                    }
+                }
                 if attempt == MAX_RETRIES {
-                    try_auto_start();
                     return None;
                 }
                 std::thread::sleep(RETRY_DELAY);
@@ -49,10 +68,7 @@ pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
             }
         };
 
-        let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
-        let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
-
-        if let Some(result) = send_request(stream, texts, normalize) {
+        if let Some(result) = send_with_timeouts(stream, texts, normalize) {
             return Some(result);
         }
 
@@ -62,6 +78,16 @@ pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
     }
 
     None
+}
+
+fn send_with_timeouts(
+    stream: UnixStream,
+    texts: &[&str],
+    normalize: bool,
+) -> Option<Vec<Vec<f32>>> {
+    let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+    let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+    send_request(stream, texts, normalize)
 }
 
 fn send_request(
@@ -110,17 +136,28 @@ fn send_request(
     }
 }
 
-fn try_auto_start() {
+fn try_auto_start() -> bool {
     let exe = match std::env::current_exe() {
         Ok(e) => e,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     // `daemon start` is idempotent — it checks liveness and exits if already running.
-    let _ = std::process::Command::new(exe)
+    let mut child = match std::process::Command::new(exe)
         .args(["daemon", "start"])
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .spawn();
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(_) => return false,
+    };
+
+    std::thread::sleep(Duration::from_millis(250));
+    match child.try_wait() {
+        Ok(Some(status)) => status.success(),
+        Ok(None) => true,
+        Err(_) => true,
+    }
 }
