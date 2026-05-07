@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_RETRIES: u32 = 2;
+const RETRY_DELAY: Duration = Duration::from_millis(500);
 
 static SOCKET_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -34,18 +36,32 @@ pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
         return None;
     }
 
-    let stream = match UnixStream::connect(&sock) {
-        Ok(s) => s,
-        Err(_) => {
-            try_auto_start();
-            return None;
+    for attempt in 0..=MAX_RETRIES {
+        let stream = match UnixStream::connect(&sock) {
+            Ok(s) => s,
+            Err(_) => {
+                if attempt == MAX_RETRIES {
+                    try_auto_start();
+                    return None;
+                }
+                std::thread::sleep(RETRY_DELAY);
+                continue;
+            }
+        };
+
+        let _ = stream.set_read_timeout(Some(REQUEST_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(REQUEST_TIMEOUT));
+
+        if let Some(result) = send_request(stream, texts, normalize) {
+            return Some(result);
         }
-    };
 
-    stream.set_read_timeout(Some(REQUEST_TIMEOUT)).ok()?;
-    stream.set_write_timeout(Some(REQUEST_TIMEOUT)).ok()?;
+        if attempt < MAX_RETRIES {
+            std::thread::sleep(RETRY_DELAY);
+        }
+    }
 
-    send_request(stream, texts, normalize)
+    None
 }
 
 fn send_request(
