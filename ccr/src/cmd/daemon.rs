@@ -122,6 +122,7 @@ extern "C" fn sigterm_handler(_sig: libc::c_int) {
 fn daemon_main(sock_path: PathBuf, pid_path: PathBuf) -> Result<()> {
     use std::os::unix::io::AsRawFd;
 
+    panda_core::summarizer::set_daemon_mode();
     ensure_dir(&pid_path);
 
     // Hold an exclusive flock on the PID file for the daemon's lifetime.
