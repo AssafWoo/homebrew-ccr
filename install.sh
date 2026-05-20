@@ -40,7 +40,7 @@ if ! command -v cargo &>/dev/null; then
 fi
 
 echo "Building PandaFilter from source (this takes ~1 min on first run)..."
-cargo install --git "$REPO_URL" --bin panda --locked 2>&1
+cargo install --git "$REPO_URL" panda --bin panda --locked 2>&1
 
 # ── Ensure ~/.cargo/bin is on PATH ────────────────────────────────────────────
 
