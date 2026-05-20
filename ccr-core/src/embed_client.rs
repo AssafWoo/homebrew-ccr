@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RETRIES: u32 = 2;
 const RETRY_DELAY: Duration = Duration::from_millis(500);
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const STARTUP_POLL_DELAY: Duration = Duration::from_millis(250);
 
 static SOCKET_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -43,6 +43,10 @@ pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
 
     let startup_deadline = Instant::now() + STARTUP_TIMEOUT;
     for attempt in 0..=MAX_RETRIES {
+        if Instant::now() >= startup_deadline {
+            return None;
+        }
+
         let stream = match UnixStream::connect(&sock) {
             Ok(s) => s,
             Err(_) => {
@@ -52,13 +56,19 @@ pub fn daemon_embed(texts: &[&str], normalize: bool) -> Option<Vec<Vec<f32>>> {
                         return None;
                     }
                 }
+                let mut connected = false;
                 while Instant::now() < startup_deadline {
                     std::thread::sleep(STARTUP_POLL_DELAY);
                     if let Ok(s) = UnixStream::connect(&sock) {
                         if let Some(result) = send_with_timeouts(s, texts, normalize) {
                             return Some(result);
                         }
+                        connected = true;
+                        break;
                     }
+                }
+                if !connected {
+                    return None;
                 }
                 if attempt == MAX_RETRIES {
                     return None;

@@ -20,20 +20,21 @@ pub fn run(command_hint: Option<String>) -> Result<()> {
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
-    let output = if let Some(ref hint) = command_hint {
+    let (output, subcommand) = if let Some(ref hint) = command_hint {
         if let Some(filtered) = try_handler(&input, hint) {
-            filtered
+            let sub = hint.split(|c: char| c == '-' || c == ' ').next().map(|s| s.to_string());
+            (filtered, sub)
         } else {
             let config = crate::config_loader::load_config()?;
             let pipeline = Pipeline::new(config);
             let result = pipeline.process(&input, command_hint.as_deref(), None, None)?;
-            result.output
+            (result.output, None)
         }
     } else {
         let config = crate::config_loader::load_config()?;
         let pipeline = Pipeline::new(config);
         let result = pipeline.process(&input, None, None, None)?;
-        result.output
+        (result.output, None)
     };
 
     io::stdout().write_all(output.as_bytes())?;
@@ -41,7 +42,7 @@ pub fn run(command_hint: Option<String>) -> Result<()> {
     let input_tokens = panda_core::tokens::count_tokens(&input);
     let output_tokens = panda_core::tokens::count_tokens(&output);
     let analytics = panda_core::analytics::Analytics::new(
-        input_tokens, output_tokens, command_hint.clone(), None, None,
+        input_tokens, output_tokens, command_hint.clone(), subcommand, None,
     );
     let project_path = crate::analytics_db::current_project_path();
     let _ = crate::analytics_db::append(&analytics, &project_path);

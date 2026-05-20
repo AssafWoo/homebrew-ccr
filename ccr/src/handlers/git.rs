@@ -194,8 +194,14 @@ const TRAILERS: &[&str] = &[
     "Acked-by:", "Tested-by:", "Reported-by:", "Cc:",
 ];
 
+fn log_line_cap() -> usize {
+    crate::config_loader::load_config()
+        .map(|c| c.global.git_log_limit)
+        .unwrap_or(25)
+}
+
 fn filter_log(output: &str) -> String {
-    const LOG_LINE_CAP: usize = 15;
+    let cap = log_line_cap();
 
     let lines: Vec<&str> = output
         .lines()
@@ -203,7 +209,7 @@ fn filter_log(output: &str) -> String {
             let msg = l.splitn(2, ' ').nth(1).unwrap_or("");
             !TRAILERS.iter().any(|t| msg.trim_start().starts_with(t))
         })
-        .take(LOG_LINE_CAP)
+        .take(cap)
         .collect();
 
     let total = output.lines().count();
@@ -219,8 +225,8 @@ fn filter_log(output: &str) -> String {
         })
         .collect();
 
-    if total > LOG_LINE_CAP {
-        result.push(format!("[+{} more commits, {} total]", total - LOG_LINE_CAP, total));
+    if total > cap {
+        result.push(format!("[+{} more commits, {} total]", total - cap, total));
     }
     result.join("\n")
 }
@@ -1010,17 +1016,18 @@ mod tests {
     }
 
     #[test]
-    fn test_log_caps_at_15_lines() {
+    fn test_log_caps_at_configured_limit() {
+        let cap = log_line_cap();
+        let input_count = cap + 15;
         let mut lines: Vec<String> = Vec::new();
-        for i in 0..30 {
+        for i in 0..input_count {
             lines.push(format!("abc{:04} commit message {}", i, i));
         }
         let output = lines.join("\n");
         let result = filter_log(&output);
         let result_lines: Vec<&str> = result.lines().collect();
-        // 15 commits + 1 overflow line = 16
-        assert_eq!(result_lines.len(), 16, "expected 16 lines, got: {}", result_lines.len());
-        assert!(result_lines.last().unwrap().contains("[+15 more commits, 30 total]"),
+        assert_eq!(result_lines.len(), cap + 1, "expected {} lines, got: {}", cap + 1, result_lines.len());
+        assert!(result_lines.last().unwrap().contains(&format!("{} total", input_count)),
             "should show overflow: {}", result_lines.last().unwrap());
     }
 

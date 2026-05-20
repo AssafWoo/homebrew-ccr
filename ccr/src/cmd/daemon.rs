@@ -62,9 +62,20 @@ fn cleanup_daemon_files() {
 
 fn start() -> Result<()> {
     if let Some(pid) = read_pid() {
-        if process_alive(pid) && daemon_socket_connectable() {
-            println!("panda daemon already running (pid {})", pid);
-            return Ok(());
+        if process_alive(pid) {
+            if daemon_socket_connectable() {
+                println!("panda daemon already running (pid {})", pid);
+                return Ok(());
+            }
+            // Process alive but socket not ready — may still be starting up.
+            // Wait briefly before concluding it's stale.
+            for _ in 0..6 {
+                std::thread::sleep(Duration::from_millis(500));
+                if daemon_socket_connectable() {
+                    println!("panda daemon already running (pid {})", pid);
+                    return Ok(());
+                }
+            }
         }
         cleanup_daemon_files();
     }
